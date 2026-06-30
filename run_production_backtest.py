@@ -25,13 +25,18 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     brier_score_loss,
+    confusion_matrix,
+    f1_score,
     log_loss,
     ndcg_score,
+    precision_score,
+    recall_score,
     roc_auc_score,
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from xgboost import DMatrix, XGBClassifier
+from feature_contract import CATEGORICAL_FEATURES, MODEL_FEATURES, POST_RACE_COLUMNS
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -40,19 +45,13 @@ DATASET = ROOT / "output" / "final_benter_dataset.parquet"
 OUTPUT = ROOT / "output"
 REPORTS = ROOT / "reports"
 
-FEATURE_COLS = [
-    "track", "distance", "surface", "race_class", "carried_weight", "draw",
-    "handicap_rating", "days_since_last_race", "last_3_avg_position",
-    "last_5_avg_position", "last_10_avg_position", "surface_win_rate",
-    "distance_win_rate", "track_win_rate", "jockey_horse_win_rate",
-    "trainer_horse_win_rate", "weight_change", "class_change",
-    "distance_change", "surface_change",
-]
-CATEGORICAL_COLS = ["track", "surface", "race_class"]
+FEATURE_COLS = MODEL_FEATURES
+CATEGORICAL_COLS = CATEGORICAL_FEATURES
 NUMERIC_COLS = [c for c in FEATURE_COLS if c not in CATEGORICAL_COLS]
 LEAKAGE_COLS = {
     "finish_position", "finish_time_seconds", "odds", "agf", "agf_percent",
     "agf_rank", "prize", "margin_text", "margin_lengths_numeric", "is_win",
+    "handicap_rating", "result_handicap_rating", *POST_RACE_COLUMNS,
 }
 
 
@@ -108,6 +107,7 @@ def build_models(y_train: pd.Series) -> dict[str, object]:
             depth=6,
             random_seed=42,
             verbose=False,
+            thread_count=1,
             cat_features=CATEGORICAL_COLS,
             allow_writing_files=False,
         ),
@@ -122,7 +122,7 @@ def build_models(y_train: pd.Series) -> dict[str, object]:
                 subsample=0.9,
                 colsample_bytree=0.9,
                 random_state=42,
-                n_jobs=4,
+                n_jobs=1,
                 scale_pos_weight=negative / positive,
             )),
         ]),
@@ -176,12 +176,18 @@ def score_model(frame: pd.DataFrame, model_name: str, split: str) -> dict[str, o
     ranks = frame.groupby("race_id")[probability_col].rank(method="first", ascending=False)
     race_count = int(frame["race_id"].nunique())
     rank_corr, ndcg, mrr = race_rank_metrics(frame, probability_col)
+    tn, fp, fn, tp = confusion_matrix(y, predicted_binary, labels=[0, 1]).ravel()
     return {
         "split": split,
         "model": model_name,
         "rows": int(len(frame)),
         "races": race_count,
         "accuracy": float(accuracy_score(y, predicted_binary)),
+        "precision": float(precision_score(y, predicted_binary, zero_division=0)),
+        "recall": float(recall_score(y, predicted_binary, zero_division=0)),
+        "f1": float(f1_score(y, predicted_binary, zero_division=0)),
+        "true_negative": int(tn), "false_positive": int(fp),
+        "false_negative": int(fn), "true_positive": int(tp),
         "top1_winner_accuracy": float(frame.loc[ranks == 1, "is_win"].sum() / race_count),
         "top3_hit_rate": float(frame.loc[ranks <= 3].groupby("race_id")["is_win"].max().mean()),
         "top5_hit_rate": float(frame.loc[ranks <= 5].groupby("race_id")["is_win"].max().mean()),
@@ -406,6 +412,11 @@ def main() -> int:
     df = df[df["race_date_parsed"].notna() & df["finish_position_numeric"].notna()].copy()
     df["is_win"] = (df["finish_position_numeric"] == 1).astype(int)
     df["year"] = df["race_date_parsed"].dt.year
+    if "race_field_complete" not in df.columns:
+        raise ValueError("Dataset is missing fail-closed race_field_complete audit")
+    complete = df["race_field_complete"].fillna(False).astype(bool)
+    incomplete_races = int(df.loc[~complete, "race_id"].nunique())
+    df = df[complete].copy()
     race_quality = df.groupby("race_id").agg(winners=("is_win", "sum"), runners=("horse_id", "size"))
     valid_races = race_quality[(race_quality["winners"] == 1) & (race_quality["runners"] >= 2)].index
     excluded_races = int(df["race_id"].nunique() - len(valid_races))
@@ -565,14 +576,14 @@ def main() -> int:
     errors = pd.DataFrame(error_rows)
 
     display_scores = scores.copy()
-    for col in ["accuracy", "top1_winner_accuracy", "top3_hit_rate", "top5_hit_rate", "log_loss", "brier_score", "roc_auc", "pr_auc", "calibration_error", "rank_correlation", "ndcg", "mean_reciprocal_rank"]:
+    for col in ["accuracy", "precision", "recall", "f1", "top1_winner_accuracy", "top3_hit_rate", "top5_hit_rate", "log_loss", "brier_score", "roc_auc", "pr_auc", "calibration_error", "rank_correlation", "ndcg", "mean_reciprocal_rank"]:
         display_scores[col] = display_scores[col].map(lambda value: fmt(value))
 
     with open(REPORTS / "model_comparison_v2.md", "w", encoding="utf-8") as report:
         report.write(f"# Model Comparison v2\n\nGenerated: {generated_at}\n\n")
         report.write("## Numeric Results\n\n")
         report.write(markdown_table(display_scores, [
-            "split", "model", "races", "accuracy", "top1_winner_accuracy", "top3_hit_rate",
+            "split", "model", "races", "accuracy", "precision", "recall", "f1", "top1_winner_accuracy", "top3_hit_rate",
             "top5_hit_rate", "log_loss", "brier_score", "roc_auc", "pr_auc",
             "calibration_error", "rank_correlation", "ndcg", "mean_reciprocal_rank",
         ]))
@@ -589,7 +600,8 @@ def main() -> int:
     for col in ["roi", "average_odds", "max_drawdown", "profit"]:
         display_roi[col] = display_roi[col].map(lambda value: fmt(value))
     with open(REPORTS / "roi_report_v2.md", "w", encoding="utf-8") as report:
-        report.write(f"# ROI Simulation Report\n\nGenerated: {generated_at}\n\n")
+        report.write(f"# ROI Simulation Report — NOT CERTIFIED\n\nGenerated: {generated_at}\n\n")
+        report.write("Historical odds have no immutable pre-race timestamp. ROI is diagnostic only and must not be used as a live-return claim.\n\n")
         report.write("Each selected horse receives 1 unit. Decimal `odds` is treated as total return including stake. No commission, limit, slippage, dead heat, or late odds movement is modeled.\n\n")
         report.write(markdown_table(display_roi, [
             "split", "model", "strategy", "total_bets", "winning_bets", "profit", "roi", "average_odds", "max_drawdown",
@@ -598,7 +610,7 @@ def main() -> int:
 
     with open(REPORTS / "feature_importance_v2.md", "w", encoding="utf-8") as report:
         report.write(f"# Feature Importance\n\nGenerated: {generated_at}\n\n")
-        report.write("Importance is computed on the 2026 holdout model trained on all valid races before 2026. One-hot contributions are aggregated back to the 20 raw production features.\n\n")
+        report.write("Importance is computed on the 2026 holdout model trained only on internally complete race fields before 2026. Historical current-race HP is forbidden; the contract uses one-race-lagged pre_race_handicap_rating.\n\n")
         for model_name in MODEL_NAMES:
             report.write(f"## {model_name.title()}\n\n")
             subset = importance[importance["model"] == model_name].sort_values("shap_mean_abs", ascending=False).head(50).copy()
@@ -638,6 +650,7 @@ def main() -> int:
         report.write(f"- Source rows/columns: `{source_rows}` / `{source_columns}`.\n")
         report.write(f"- Backtest as-of date: `{as_of_date.date().isoformat()}`; future-dated rows excluded: `{future_dated_rows}`.\n")
         report.write(f"- Completed valid-race rows evaluated/trained: `{len(df)}`.\n")
+        report.write(f"- Incomplete-field races excluded before training/evaluation: `{incomplete_races}`.\n")
         report.write(f"- Excluded races without exactly one winner or with fewer than two runners: `{excluded_races}`.\n")
         report.write(f"- Duplicate horse/race rows in source: `{source_duplicates}`.\n")
         report.write(f"- Leakage columns intersecting model features: `{leakage_intersection}`.\n")

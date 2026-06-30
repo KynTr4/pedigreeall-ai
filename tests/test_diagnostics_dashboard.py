@@ -50,14 +50,16 @@ class DiagnosticsDashboardTests(unittest.TestCase):
                     prediction_id,model_version,pipeline_version,race_id,horse_id,prediction_time,
                     race_start_at,logistic_probability,catboost_probability,xgboost_probability,
                     ensemble_probability,predicted_rank,feature_hash,feature_values_json,
-                    feature_contract_version,feature_snapshot_id,source_request_id)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v1',?,?)""",
+                    feature_contract_version,feature_snapshot_id,source_request_id,
+                    agf_percent,agf_rank,odds)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'v1',?,?,?,?,?)""",
                     (f"pred-{race_id}-{horse}", "model-v1", "pipe-v1", race_id, f"h{horse}",
                      prediction_time.isoformat(), start.isoformat(), p, p, p, p, horse,
                      f"hash-{race_id}-{horse}", json.dumps({
                          "last_3_avg_position": float(horse), "last_5_avg_position": float(horse + 1),
                          "jockey_horse_win_rate": 0.20 / horse, "carried_weight": 55 + horse,
-                     }) if race_id == "race-1" else "{}", snapshots[-1], f"program-{race_id}-{horse}"))
+                     }) if race_id == "race-1" else "{}", snapshots[-1], f"program-{race_id}-{horse}",
+                     float(50 - 10 * agf[horse - 1]), int(agf[horse - 1]), float(odds if horse == 1 else 2.0)))
                 db.execute("""INSERT INTO agf_snapshots(
                     race_id,horse_id,captured_at,agf_percent,agf_rank,source_request_id)
                     VALUES(?,?,?,?,?,?)""", (race_id, f"h{horse}", prediction_time.isoformat(),

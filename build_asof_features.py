@@ -87,9 +87,9 @@ def history_features(target: pd.Series, history: pd.DataFrame) -> dict[str, obje
             "jockey_horse_win_rate": np.nan,
             "trainer_horse_win_rate": np.nan,
             "weight_change": np.nan,
-            "class_change": 1,
+            "class_change": np.nan,
             "distance_change": np.nan,
-            "surface_change": 1,
+            "surface_change": np.nan,
         }
     last = past.iloc[-1]
     result = {
@@ -138,6 +138,13 @@ def build_frame(db_path: str | Path = DB) -> pd.DataFrame:
     program["_captured"] = pd.to_datetime(program["captured_at"], utc=True, errors="raise")
     if not (program["_captured"] < program["_start"]).all():
         raise AssertionError("Program as-of join admitted captured_at >= race_start_at")
+    # The race-program HANDICAP field is a genuine pre-race value because the
+    # selected immutable program snapshot is strictly earlier than race start.
+    # Keep the raw storage name out of the model contract to prevent accidental
+    # reuse of post-race GET:Tjk/Get.HP in historical builds.
+    program["pre_race_handicap_rating"] = pd.to_numeric(
+        program["handicap_rating"], errors="coerce"
+    )
 
     if results.empty:
         history = pd.DataFrame(columns=list(program.columns) + ["finish_position"])

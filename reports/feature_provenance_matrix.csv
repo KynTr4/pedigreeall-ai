@@ -15,8 +15,14 @@ finish_position,False,horse_races.finish (S),Post-race result,Post-race result,N
 finish_time_seconds,False,horse_races.race_time (DERECE),Post-race result,Post-race result,Not applicable,Outcome/final-market or timing-unproven field,EXCLUDED_POST_RACE_OR_UNPROVEN
 odds,False,horse_races.odds (GNY),Final/result-history win dividend; not proven pre-race,Final/result-history win dividend; not proven pre-race,Not applicable,Outcome/final-market or timing-unproven field,EXCLUDED_POST_RACE_OR_UNPROVEN
 agf,False,horse_races.agf,Normalizer currently writes NULL,Normalizer currently writes NULL,Not applicable,Outcome/final-market or timing-unproven field,EXCLUDED_POST_RACE_OR_UNPROVEN
-handicap_rating,True,horse_races.rating (HP),Handicap rating,Semantically pre-race; capture time not recorded,No calculation; direct target-race value,Possible post-event correction cannot be ruled out,CONDITIONAL
+handicap_rating,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
+pre_race_handicap_rating,True,lag(horse_races.rating/GET:Tjk/Get.HP),Previous race HP; current-race HP is forbidden because it is post-race updated,Semantically pre-race; capture time not recorded,No calculation; direct target-race value,Possible post-event correction cannot be ruled out,CONDITIONAL
 prize,False,horse_races.prize (IKRAMIYE),Result-history field; semantics/timing unproven,Result-history field; semantics/timing unproven,Not applicable,Outcome/final-market or timing-unproven field,EXCLUDED_POST_RACE_OR_UNPROVEN
+race_field_complete,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
+found_starters,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
+expected_starters_min,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
+missing_starters_min,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
+history_order_certified,False,builder,Placeholder or unmapped column,Unverified,Unverified,Not used by model,NOT_MODEL_FEATURE_UNVERIFIED
 days_since_last_race,True,Derived from horse_races,Latest prior race date,Computed from earlier races,Uses shift/cumulative prior values; strict-date audit sampled,Current finish excluded; date-only ordering has 2 historical collision groups,PASS_WITH_CAVEAT
 last_3_avg_position,True,Derived from horse_races,"Prior finish positions, window=3",Computed from earlier races,Uses shift/cumulative prior values; strict-date audit sampled,Current finish excluded; date-only ordering has 2 historical collision groups,PASS_WITH_CAVEAT
 last_5_avg_position,True,Derived from horse_races,"Prior finish positions, window=5",Computed from earlier races,Uses shift/cumulative prior values; strict-date audit sampled,Current finish excluded; date-only ordering has 2 historical collision groups,PASS_WITH_CAVEAT

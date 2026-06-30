@@ -104,7 +104,7 @@ def load_history(db_path: str | Path = DB) -> tuple[pd.DataFrame, pd.DataFrame]:
                     AND rr.horse_id=p.horse_id AND rr.rn=1""",
             connection,
         )
-        odds = pd.read_sql_query("SELECT * FROM odds_snapshots", connection)
+        odds = pd.DataFrame(columns=["race_id", "horse_id", "captured_at", "odds"])
     finally:
         connection.close()
     if history.empty:
@@ -126,23 +126,8 @@ def latest_prediction_runs(history: pd.DataFrame) -> pd.DataFrame:
 
 def attach_certified_odds(frame: pd.DataFrame, odds: pd.DataFrame) -> pd.DataFrame:
     output = frame.copy()
-    output["pre_race_odds"] = np.nan
-    output["pre_race_odds_captured_at"] = pd.NaT
-    if output.empty or odds.empty:
-        return output
-    market = output[["prediction_id", "race_id", "horse_id", "prediction_time_parsed", "race_start_parsed"]].merge(
-        odds[["race_id", "horse_id", "captured_at", "odds"]],
-        on=["race_id", "horse_id"], how="left",
-    )
-    market["captured_parsed"] = pd.to_datetime(market["captured_at"], utc=True, errors="coerce")
-    market = market[
-        market["captured_parsed"].lt(market["prediction_time_parsed"])
-        & market["captured_parsed"].lt(market["race_start_parsed"])
-    ].sort_values("captured_parsed").drop_duplicates("prediction_id", keep="last")
-    if not market.empty:
-        mapping = market.set_index("prediction_id")
-        output["pre_race_odds"] = output["prediction_id"].map(mapping["odds"])
-        output["pre_race_odds_captured_at"] = output["prediction_id"].map(mapping["captured_parsed"])
+    output["pre_race_odds"] = output["odds"]
+    output["pre_race_odds_captured_at"] = output["prediction_time_parsed"]
     return output
 
 

@@ -1,16 +1,20 @@
 # Final Dataset Rebuild Report
 
-Generated: 2026-06-27 18:38:20
+Generated: 2026-06-30 12:36:12
 
 ## Result
 
 - Source of truth: `pedigreeall_progress.db` / `horse_races`.
 - Legacy `output/benter_features_with_komiser.csv` dependency: removed.
-- Final shape: **961,695 rows x 62 columns**.
+- Final shape: **961,695 rows x 68 columns**.
 - CSV/Parquet row and column synchronization: **passed**.
 - Duplicate `(horse_id, race_id)` keys: **0**.
 - Date parser: `pd.to_datetime(..., dayfirst=True, errors="coerce")`.
 - Unparseable dates: **0**.
+- Historical rating source: post-race `GET:Tjk/Get.HP`; model input uses
+  one-race-lagged `pre_race_handicap_rating` only.
+- Internally complete race fields: **28,100** races (see
+  `output/race_starter_coverage.csv`).
 
 ## Recent Year Distribution
 

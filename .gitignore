@@ -6,6 +6,7 @@ output/
 backups/
 *.parquet
 *.pkl
+!models/*.pkl
 *.joblib
 __pycache__/
 .venv/
@@ -14,3 +15,6 @@ dist/
 .cache/
 .config/
 .pytest_cache/
+catboost_info/
+lake/
+*.log

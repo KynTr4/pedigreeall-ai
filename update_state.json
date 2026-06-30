@@ -1,4 +1,8 @@
 {
-  "last_run_date": "2026-06-29",
+  "last_run_date": "2026-06-26",
+  "last_processed_city_ids": [],
+  "last_downloaded_pdf": "",
+  "last_downloaded_agf": "",
+  "last_horse_id_scanned": 0,
   "race_program_status": "completed"
 }

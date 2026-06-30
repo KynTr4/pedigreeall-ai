@@ -62,6 +62,26 @@ class ShadowMonitoringTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("UPDATE prediction_feature_snapshots SET feature_hash='changed'")
 
+    def test_agf_and_odds_archived_from_db(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute(
+                """INSERT INTO agf_snapshots(race_id, horse_id, captured_at, agf_percent, agf_rank, source_request_id)
+                   VALUES('r1', 'h1', '2020-01-01T09:30:00+00:00', 35.5, 2, 'source_agf')"""
+            )
+            db.execute(
+                """INSERT INTO odds_snapshots(race_id, horse_id, captured_at, odds, source_request_id)
+                   VALUES('r1', 'h1', '2020-01-01T09:30:00+00:00', 4.5, 'source_odds')"""
+            )
+        scored = self.scored()
+        archive = archive_predictions(scored, self.db, "2020-01-01T10:00:00+00:00")
+        self.assertEqual(len(archive), 1)
+        with sqlite3.connect(self.db) as db:
+            db.row_factory = sqlite3.Row
+            row = db.execute("SELECT agf_percent, agf_rank, odds FROM prediction_snapshots").fetchone()
+            self.assertEqual(row["agf_percent"], 35.5)
+            self.assertEqual(row["agf_rank"], 2)
+            self.assertEqual(row["odds"], 4.5)
+
     def test_post_start_prediction_is_rejected(self):
         with self.assertRaises(ValueError):
             archive_predictions(self.scored(), self.db, "2020-01-01T13:00:00+00:00")

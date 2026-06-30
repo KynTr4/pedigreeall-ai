@@ -57,7 +57,7 @@ def top1_accuracy(frame):
     return float(winners["is_win"].mean()) if len(winners) else float("nan")
 
 
-def main():
+def legacy_main():
     os.makedirs("models", exist_ok=True)
     os.makedirs("reports", exist_ok=True)
 
@@ -239,5 +239,11 @@ def main():
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
 
 
+def main():
+    """Compatibility entry point for the versioned three-model trainer."""
+    from train_production_models import main as train_model_family
+    return train_model_family()
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

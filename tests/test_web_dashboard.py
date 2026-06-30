@@ -55,12 +55,13 @@ class WebDashboardTests(unittest.TestCase):
                            prediction_time,race_start_at,logistic_probability,
                            catboost_probability,xgboost_probability,ensemble_probability,
                            predicted_rank,feature_hash,feature_values_json,
-                           feature_contract_version,feature_snapshot_id,source_request_id)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'{}','v1',?,?)""",
+                           feature_contract_version,feature_snapshot_id,source_request_id,
+                           odds)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'{}','v1',?,?,?)""",
                     (f"prediction-{index}-{horse_no}", "model-v1", "pipeline-v1", race_id,
                      f"horse-{horse_no}", predicted.isoformat(), start.isoformat(), *values,
                      horse_no, f"hash-{index}-{horse_no}", snapshot_ids[horse_no - 1],
-                     f"program-{index}-{horse_no}"),
+                     f"program-{index}-{horse_no}", 3.40 if horse_no == 1 else 2.10),
                 )
                 connection.execute(
                     """INSERT INTO race_results(

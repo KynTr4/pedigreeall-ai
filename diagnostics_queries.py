@@ -36,23 +36,7 @@ result_ranked AS (
         PARTITION BY r.race_id,r.horse_id ORDER BY r.captured_at DESC,r.result_id DESC
     ) AS rn FROM race_results r,settings s WHERE r.race_id=s.race_id
 ),
-results AS (SELECT * FROM result_ranked WHERE rn=1),
-agf_ranked AS (
-    SELECT a.*,ROW_NUMBER() OVER(
-        PARTITION BY a.race_id,a.horse_id ORDER BY a.captured_at DESC,a.snapshot_id DESC
-    ) AS rn
-    FROM agf_snapshots a JOIN scored p ON p.race_id=a.race_id AND p.horse_id=a.horse_id
-    WHERE julianday(a.captured_at)<=julianday(p.prediction_time)
-),
-agf AS (SELECT * FROM agf_ranked WHERE rn=1),
-odds_ranked AS (
-    SELECT o.*,ROW_NUMBER() OVER(
-        PARTITION BY o.race_id,o.horse_id ORDER BY o.captured_at DESC,o.snapshot_id DESC
-    ) AS rn
-    FROM odds_snapshots o JOIN scored p ON p.race_id=o.race_id AND p.horse_id=o.horse_id
-    WHERE julianday(o.captured_at)<=julianday(p.prediction_time)
-),
-odds AS (SELECT * FROM odds_ranked WHERE rn=1)
+results AS (SELECT * FROM result_ranked WHERE rn=1)
 """
 
 DIAGNOSTICS_CTE = r"""
@@ -105,34 +89,19 @@ result_ranked AS (
 results AS (SELECT * FROM result_ranked WHERE rn=1),
 winner_candidates AS (
     SELECT r.race_id,r.horse_id,r.result_odds,p.model_rank,p.model_probability,
+           p.agf_percent,p.agf_rank,
            ROW_NUMBER() OVER(PARTITION BY r.race_id ORDER BY p.model_rank,r.horse_id) AS rn
     FROM results r JOIN ranked_predictions p
       ON p.race_id=r.race_id AND p.horse_id=r.horse_id
     WHERE r.finish_position=1
 ),
 winners AS (SELECT * FROM winner_candidates WHERE rn=1),
-agf_ranked AS (
-    SELECT a.*,ROW_NUMBER() OVER(
-        PARTITION BY a.race_id,a.horse_id ORDER BY a.captured_at DESC,a.snapshot_id DESC
-    ) AS rn
-    FROM agf_snapshots a JOIN race_meta m ON m.race_id=a.race_id
-    WHERE julianday(a.captured_at)<julianday(m.race_start_at)
-),
-latest_agf AS (SELECT * FROM agf_ranked WHERE rn=1),
-odds_ranked AS (
-    SELECT o.*,ROW_NUMBER() OVER(
-        PARTITION BY o.race_id,o.horse_id ORDER BY o.captured_at DESC,o.snapshot_id DESC
-    ) AS rn
-    FROM odds_snapshots o JOIN race_meta m ON m.race_id=o.race_id
-    WHERE julianday(o.captured_at)<julianday(m.race_start_at)
-),
-latest_odds AS (SELECT * FROM odds_ranked WHERE rn=1),
 agf_favorite_ranked AS (
     SELECT a.*,ROW_NUMBER() OVER(
         PARTITION BY race_id ORDER BY CASE WHEN agf_rank IS NULL THEN 1 ELSE 0 END,
                  agf_rank,agf_percent DESC,horse_id
     ) AS favorite_rank
-    FROM latest_agf a
+    FROM ranked_predictions a
 ),
 agf_favorites AS (SELECT * FROM agf_favorite_ranked WHERE favorite_rank=1),
 top_predictions AS (SELECT * FROM ranked_predictions WHERE model_rank=1),
@@ -146,7 +115,7 @@ diagnostics AS (
            COALESCE(wp.horse_name,w.horse_id) AS winner_horse,w.model_rank AS winner_rank,
            w.model_probability AS winner_probability,
            t.model_probability-w.model_probability AS probability_difference,
-           wa.agf_percent AS winner_agf,wa.agf_rank AS winner_agf_rank,
+           w.agf_percent AS winner_agf,w.agf_rank AS winner_agf_rank,
            af.horse_id AS agf_favorite_id,COALESCE(ap.horse_name,af.horse_id) AS agf_favorite,
            af.agf_percent AS agf_favorite_percent,
            CASE WHEN t.horse_id=w.horse_id THEN 1 ELSE 0 END AS correct,
@@ -156,9 +125,9 @@ diagnostics AS (
            CASE WHEN t.horse_id=w.horse_id AND af.horse_id<>w.horse_id THEN 'Model > AGF'
                 WHEN af.horse_id=w.horse_id AND t.horse_id<>w.horse_id THEN 'AGF > Model'
                 ELSE 'Beraber' END AS agf_comparison,
-           w.result_odds AS official_odds,o.odds AS pre_race_odds,
-           CASE WHEN o.odds IS NULL OR o.odds<=0 THEN NULL
-                WHEN t.horse_id<>w.horse_id THEN -1.0 ELSE o.odds-1.0 END AS net_return,
+           w.result_odds AS official_odds,t.odds AS pre_race_odds,
+           CASE WHEN t.odds IS NULL OR t.odds<=0 THEN NULL
+                WHEN t.horse_id<>w.horse_id THEN -1.0 ELSE t.odds-1.0 END AS net_return,
            CASE WHEN lower(COALESCE(m.surface,'')) LIKE '%sent%' THEN 'Sentetik'
                 WHEN lower(COALESCE(m.surface,'')) LIKE '%kum%' THEN 'Kum'
                 WHEN lower(COALESCE(m.surface,'')) LIKE '%çim%' OR lower(COALESCE(m.surface,'')) LIKE '%cim%' THEN 'Çim'
@@ -182,8 +151,6 @@ diagnostics AS (
     JOIN winners w ON w.race_id=m.race_id
     LEFT JOIN programs tp ON tp.race_id=t.race_id AND tp.horse_id=t.horse_id
     LEFT JOIN programs wp ON wp.race_id=w.race_id AND wp.horse_id=w.horse_id
-    LEFT JOIN latest_agf wa ON wa.race_id=w.race_id AND wa.horse_id=w.horse_id
-    LEFT JOIN latest_odds o ON o.race_id=t.race_id AND o.horse_id=t.horse_id
     LEFT JOIN agf_favorites af ON af.race_id=m.race_id
     LEFT JOIN programs ap ON ap.race_id=af.race_id AND ap.horse_id=af.horse_id
 )
@@ -354,6 +321,7 @@ def _horse_card(row: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]
         "agf": row.get("agf_percent"), "agf_rank": row.get("agf_rank"),
         "odds_at_prediction": row.get("odds"), "jockey": row.get("jockey"),
         "trainer": row.get("trainer"), "carried_weight": row.get("carried_weight"),
+        "pre_race_handicap_rating": first("pre_race_handicap_rating"),
         "age": first("age"), "sex": first("sex", "gender"),
         "pedigree": first("pedigree", "pedigree_score"),
         "last_race_date": first("last_race_date"),
@@ -377,12 +345,10 @@ def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ense
                p.feature_values_json,p.feature_contract_version,p.feature_snapshot_id,
                COALESCE(fs.horse_name,p.horse_id) AS horse_name,fs.race_no,fs.track,
                fs.surface,fs.distance,fs.race_class,fs.jockey,fs.trainer,fs.carried_weight,
-               fs.draw,fs.handicap_rating,a.agf_percent,a.agf_rank,o.odds,
+               fs.draw,fs.handicap_rating,p.agf_percent,p.agf_rank,p.odds,
                r.finish_position,r.result_status
         FROM ranked p
         LEFT JOIN program_snapshots fs ON fs.snapshot_id=p.feature_snapshot_id
-        LEFT JOIN agf a ON a.race_id=p.race_id AND a.horse_id=p.horse_id
-        LEFT JOIN odds o ON o.race_id=p.race_id AND o.horse_id=p.horse_id
         LEFT JOIN results r ON r.race_id=p.race_id AND r.horse_id=p.horse_id
         ORDER BY p.model_rank""", (model, race_id)).fetchall()
     if not rows:

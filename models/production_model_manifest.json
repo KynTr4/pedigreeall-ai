@@ -1,0 +1,102 @@
+{
+  "generated_at": "2026-06-30T09:50:08.530425+00:00",
+  "feature_contract_version": "asof-model-features-v2-prerace-rating",
+  "features": [
+    "track",
+    "distance",
+    "surface",
+    "race_class",
+    "carried_weight",
+    "draw",
+    "pre_race_handicap_rating",
+    "days_since_last_race",
+    "last_3_avg_position",
+    "last_5_avg_position",
+    "last_10_avg_position",
+    "surface_win_rate",
+    "distance_win_rate",
+    "track_win_rate",
+    "jockey_horse_win_rate",
+    "trainer_horse_win_rate",
+    "weight_change",
+    "class_change",
+    "distance_change",
+    "surface_change"
+  ],
+  "dataset": "output\\final_benter_dataset.parquet",
+  "dataset_sha256": "2f36462ab2d5fdf55b96b0413ba23cf963b5292982944afb52616448fe5bc791",
+  "split": {
+    "train_rows": 214189,
+    "train_races": 26458,
+    "train_min": "1970-01-08",
+    "train_max": "2025-12-31",
+    "test_rows": 15322,
+    "test_races": 1642,
+    "test_min": "2026-01-01",
+    "test_max": "2026-06-26"
+  },
+  "metrics": {
+    "logistic": {
+      "rows": 15322,
+      "races": 1642,
+      "top1_accuracy": 0.26674786845310594,
+      "log_loss": 0.3101874252342043,
+      "brier": 0.08902332091602971,
+      "precision": 0.4444444444444444,
+      "recall": 0.00243605359317905,
+      "f1": 0.004845548152634767
+    },
+    "catboost": {
+      "rows": 15322,
+      "races": 1642,
+      "top1_accuracy": 0.27527405602923266,
+      "log_loss": 0.30713595824461437,
+      "brier": 0.08857612789415369,
+      "precision": 0.3333333333333333,
+      "recall": 0.0018270401948842874,
+      "f1": 0.0036341611144760752
+    },
+    "xgboost": {
+      "rows": 15322,
+      "races": 1642,
+      "top1_accuracy": 0.2673568818514007,
+      "log_loss": 0.31362289754259337,
+      "brier": 0.0901825192908723,
+      "precision": 1.0,
+      "recall": 0.0006090133982947625,
+      "f1": 0.0012172854534388314
+    },
+    "ensemble": {
+      "rows": 15322,
+      "races": 1642,
+      "top1_accuracy": 0.2758830694275274,
+      "log_loss": 0.3087002383661837,
+      "brier": 0.0888964615526925,
+      "precision": 0.6666666666666666,
+      "recall": 0.001218026796589525,
+      "f1": 0.0024316109422492403
+    }
+  },
+  "artifacts": {
+    "logistic": {
+      "path": "models\\benter_baseline_logistic.pkl",
+      "sha256": "5326b1df7a6f0df321eddc9137a1f73cc75afa52fb32eb61902296dd804bf884"
+    },
+    "catboost": {
+      "path": "models\\benter_baseline_catboost.pkl",
+      "sha256": "87d8b3e7a28c9f1b40b2493479184a770d8a25d86c4dbe7a38893473d792cbe7"
+    },
+    "xgboost": {
+      "path": "models\\xgboost_production.pkl",
+      "sha256": "f499bc23fd963bac850895ad18451be191bcd64c0cfaf341a14923c3f9736ac8"
+    }
+  },
+  "ensemble": {
+    "method": "equal_mean",
+    "members": [
+      "logistic",
+      "catboost",
+      "xgboost"
+    ]
+  }
+}

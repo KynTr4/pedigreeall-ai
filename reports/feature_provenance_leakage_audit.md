@@ -1,6 +1,6 @@
 # Feature Provenance / As-of Leakage Audit
 
-Generated: 2026-06-27 19:25:31
+Generated: 2026-06-30 12:50:49
 
 ## Executive Verdict
 
@@ -28,8 +28,8 @@ but this dataset cannot prove that the exact stored value was available then.
 
 ## Automated Evidence
 
-- Dataset audited: `961,695` rows × `62` columns.
-- Provenance rows written: `62` (every final dataset column).
+- Dataset audited: `961,695` rows × `68` columns.
+- Provenance rows written: `68` (every final dataset column).
 - Model features: `20`.
 - Explicit outcome/final-market intersection with model list: `[]`.
 - Strict `history.race_date < target.race_date` reference sample: `300` recent rows / `3,900` feature comparisons.
@@ -51,7 +51,7 @@ calculation evidence, not source-time evidence.
 | `race_class` | horse_races.race_class | Semantically pre-race; capture time not recorded | No calculation; direct target-race value | **CONDITIONAL** |
 | `carried_weight` | horse_races.weight | Semantically pre-race; capture time not recorded | No calculation; direct target-race value | **CONDITIONAL** |
 | `draw` | horse_races.gate | Semantically pre-race; capture time not recorded | No calculation; direct target-race value | **CONDITIONAL** |
-| `handicap_rating` | horse_races.rating (HP) | Semantically pre-race; capture time not recorded | No calculation; direct target-race value | **CONDITIONAL** |
+| `pre_race_handicap_rating` | lag(horse_races.rating/GET:Tjk/Get.HP) | Semantically pre-race; capture time not recorded | No calculation; direct target-race value | **CONDITIONAL** |
 | `days_since_last_race` | Derived from horse_races | Computed from earlier races | Uses shift/cumulative prior values; strict-date audit sampled | **PASS_WITH_CAVEAT** |
 | `last_3_avg_position` | Derived from horse_races | Computed from earlier races | Uses shift/cumulative prior values; strict-date audit sampled | **PASS_WITH_CAVEAT** |
 | `last_5_avg_position` | Derived from horse_races | Computed from earlier races | Uses shift/cumulative prior values; strict-date audit sampled | **PASS_WITH_CAVEAT** |

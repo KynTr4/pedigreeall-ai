@@ -28,7 +28,9 @@ BASE_COLUMNS = [
     "horse_id", "race_id", "race_date", "track", "distance", "surface",
     "race_class", "horse_name", "jockey", "trainer", "carried_weight",
     "draw", "finish_position", "finish_time_seconds", "odds", "agf",
-    "handicap_rating", "prize", "days_since_last_race",
+    "handicap_rating", "pre_race_handicap_rating", "prize",
+    "race_field_complete", "found_starters", "expected_starters_min",
+    "missing_starters_min", "history_order_certified", "days_since_last_race",
     "last_3_avg_position", "last_5_avg_position", "last_10_avg_position",
     "surface_win_rate", "distance_win_rate", "track_win_rate",
     "jockey_horse_win_rate", "trainer_horse_win_rate", "weight_change",
@@ -100,6 +102,20 @@ def prior_rate(frame: pd.DataFrame, category: str) -> pd.Series:
     return wins_before.div(starts.where(starts > 0))
 
 
+def add_historical_pre_race_rating(frame: pd.DataFrame) -> pd.DataFrame:
+    """Use only the prior race's post-race HP as the next race's known rating."""
+    output = frame.copy()
+    same_day_count = output.groupby(
+        ["horse_id", "_date"], dropna=False
+    )["race_id"].transform("size")
+    output["history_order_certified"] = same_day_count.eq(1)
+    output["pre_race_handicap_rating"] = output.groupby(
+        "horse_id", sort=False, dropna=False
+    )["handicap_rating"].shift()
+    output.loc[~output["history_order_certified"], "pre_race_handicap_rating"] = np.nan
+    return output
+
+
 def load_base_from_db() -> pd.DataFrame:
     logger.info("Loading horse_races from %s", DB_PATH)
     with sqlite3.connect(DB_PATH) as connection:
@@ -146,6 +162,12 @@ def load_base_from_db() -> pd.DataFrame:
 
     frame = frame.sort_values(["horse_id", "_date", "race_id"], kind="stable").reset_index(drop=True)
     horses = frame.groupby("horse_id", sort=False, dropna=False)
+    # GET:Tjk/Get.HP is fetched from the post-race history endpoint and changes
+    # with that race's result.  Only the preceding race's HP is admissible for
+    # historical training.  Same-day order cannot be certified without a start
+    # time, so those rows receive no historical pre-race rating.
+    frame = add_historical_pre_race_rating(frame)
+    horses = frame.groupby("horse_id", sort=False, dropna=False)
     previous_date = horses["_date"].shift()
     frame["days_since_last_race"] = (frame["_date"] - previous_date).dt.days.astype(float)
     for window in (3, 5, 10):
@@ -168,7 +190,46 @@ def load_base_from_db() -> pd.DataFrame:
     frame["class_change"] = frame["race_class"].ne(previous_class).astype(int)
     frame["distance_change"] = frame["distance"] - previous_distance
     frame["surface_change"] = frame["surface"].ne(previous_surface).astype(int)
+    frame = add_race_field_audit(frame)
     return frame
+
+
+def add_race_field_audit(frame: pd.DataFrame) -> pd.DataFrame:
+    """Prove the minimum internally complete field without inventing starters.
+
+    A race is admitted for training only when every observed row has one unique,
+    positive integer finish and the set is exactly 1..N.  This cannot prove
+    scratched/non-finishing starters that never reached the source, so the
+    expected count is explicitly named a minimum rather than a program count.
+    """
+    finish = pd.to_numeric(frame["finish_position"], errors="coerce")
+    valid_integer = finish.notna() & finish.gt(0) & finish.mod(1).eq(0)
+    audit = pd.DataFrame({"race_id": frame["race_id"], "finish": finish.where(valid_integer)})
+    grouped = audit.groupby("race_id", sort=False, dropna=False)
+    stats = grouped.agg(
+        found_starters=("race_id", "size"),
+        numeric_finishes=("finish", "count"),
+        unique_finishes=("finish", "nunique"),
+        min_finish=("finish", "min"),
+        expected_starters_min=("finish", "max"),
+    )
+    stats["race_field_complete"] = (
+        stats["found_starters"].ge(2)
+        & stats["numeric_finishes"].eq(stats["found_starters"])
+        & stats["unique_finishes"].eq(stats["found_starters"])
+        & stats["min_finish"].eq(1)
+        & stats["expected_starters_min"].eq(stats["found_starters"])
+    )
+    stats["missing_starters_min"] = (
+        stats["expected_starters_min"] - stats["unique_finishes"]
+    ).clip(lower=0)
+    stats["expected_starters_min"] = stats["expected_starters_min"].fillna(stats["found_starters"])
+    coverage = stats.reset_index()[[
+        "race_id", "found_starters", "expected_starters_min",
+        "missing_starters_min", "race_field_complete",
+    ]]
+    coverage.to_csv(OUTPUT / "race_starter_coverage.csv", index=False, encoding="utf-8")
+    return frame.merge(coverage, on="race_id", how="left", validate="many_to_one")
 
 
 def merge_optional_enrichments(frame: pd.DataFrame) -> pd.DataFrame:
@@ -258,6 +319,7 @@ def save_final_dataset(frame: pd.DataFrame) -> tuple[int, int]:
 
 def write_report(frame: pd.DataFrame, rows: int, columns: int) -> None:
     parsed = parse_dates(frame["race_date"])
+    complete_races = int(frame.loc[frame["race_field_complete"].fillna(False), "race_id"].nunique())
     distribution = (
         pd.DataFrame({"year": parsed.dt.year, "race_id": frame["race_id"]})
         .dropna(subset=["year"]).groupby("year").agg(rows=("race_id", "size"), races=("race_id", "nunique"))
@@ -277,6 +339,10 @@ Generated: {datetime.now():%Y-%m-%d %H:%M:%S}
 - Duplicate `(horse_id, race_id)` keys: **0**.
 - Date parser: `pd.to_datetime(..., dayfirst=True, errors="coerce")`.
 - Unparseable dates: **{int(parsed.isna().sum())}**.
+- Historical rating source: post-race `GET:Tjk/Get.HP`; model input uses
+  one-race-lagged `pre_race_handicap_rating` only.
+- Internally complete race fields: **{complete_races:,}** races (see
+  `output/race_starter_coverage.csv`).
 
 ## Recent Year Distribution
 

@@ -1,31 +1,32 @@
 # Production Backtest Report v2
 
-Generated: 2026-06-27 18:39:26
+Generated: 2026-06-30 12:43:07
 
 ## Executive Decision
 
 - Production ready: **No, not yet**. The intended recent-year temporal test now runs successfully; betting-data quality and live validation gates remain.
-- Best holdout model: **catboost**.
-- Expected winner accuracy from the 2026 holdout: **57.95%** across `2452` races.
-- Observed top-1 ROI under stated assumptions: **125.33%**. This is descriptive, not a guaranteed live return.
-- Highest SHAP contributors: catboost: handicap_rating, last_3_avg_position, race_class, draw, track; logistic: race_class, surface, handicap_rating, track, last_3_avg_position; xgboost: handicap_rating, race_class, last_3_avg_position, draw, track.
+- Best holdout model: **ensemble**.
+- Expected winner accuracy from the 2026 holdout: **27.59%** across `1642` races.
+- Observed top-1 ROI under stated assumptions: **-28.94%**. This is descriptive, not a guaranteed live return.
+- Highest SHAP contributors: catboost: last_3_avg_position, pre_race_handicap_rating, draw, race_class, carried_weight; logistic: race_class, surface, track, last_3_avg_position, draw; xgboost: last_3_avg_position, pre_race_handicap_rating, draw, race_class, carried_weight.
 
 ## Temporal Design
 
 | split | evaluation_year | train_rows | train_races | train_max_date | evaluation_rows | evaluation_races | evaluation_min_date | evaluation_max_date |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| validation | 2024 | 633110 | 83260 | 2023-12-31 | 13268 | 2228 | 2024-01-02 | 2024-12-31 |
-| test | 2025 | 646378 | 85488 | 2024-12-31 | 36640 | 4415 | 2025-01-01 | 2025-12-31 |
-| holdout | 2026 | 683018 | 89903 | 2025-12-31 | 21496 | 2452 | 2026-01-01 | 2026-06-26 |
+| validation | 2024 | 181716 | 22792 | 2023-12-17 | 5862 | 799 | 2024-01-03 | 2024-12-31 |
+| test | 2025 | 187578 | 23591 | 2024-12-31 | 26611 | 2867 | 2025-01-01 | 2025-12-31 |
+| holdout | 2026 | 214189 | 26458 | 2025-12-31 | 15322 | 1642 | 2026-01-01 | 2026-06-26 |
 
 Every fold was retrained from scratch with `train_date < evaluation_date`. Saved production model predictions were not reused. Validation, test and holdout evaluate 2024, 2025 and 2026 respectively.
 
 ## Data Integrity
 
-- Source rows/columns: `961695` / `62`.
-- Backtest as-of date: `2026-06-27`; future-dated rows excluded: `0`.
-- Completed valid-race rows evaluated/trained: `704514`.
-- Excluded races without exactly one winner or with fewer than two runners: `52460`.
+- Source rows/columns: `961695` / `68`.
+- Backtest as-of date: `2026-06-30`; future-dated rows excluded: `0`.
+- Completed valid-race rows evaluated/trained: `229511`.
+- Incomplete-field races excluded before training/evaluation: `116715`.
+- Excluded races without exactly one winner or with fewer than two runners: `0`.
 - Duplicate horse/race rows in source: `0`.
 - Leakage columns intersecting model features: `[]`.
 - AGF value-bet test remains unavailable because a reliable timestamped pre-race AGF snapshot is not present.
@@ -34,10 +35,10 @@ Every fold was retrained from scratch with `train_date < evaluation_date`. Saved
 
 | model | lost_races | agf_favorite_analysis | predicted_horse_jockey_change_rate | predicted_horse_surface_change_rate | predicted_horse_distance_change_rate | predicted_horse_steward_incident_rate | actual_winner_jockey_change_rate | actual_winner_surface_change_rate | actual_winner_distance_change_rate | actual_winner_steward_incident_rate |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| logistic | 5813 | unavailable | 0.0000 | 0.3253 | 0.6260 | 0.0000 | 0.0000 | 0.2908 | 0.6966 | 0.0000 |
-| catboost | 3700 | unavailable | 0.0000 | 0.2465 | 0.7327 | 0.0000 | 0.0000 | 0.2908 | 0.6966 | 0.0000 |
-| xgboost | 3920 | unavailable | 0.0000 | 0.3013 | 0.7005 | 0.0000 | 0.0000 | 0.2908 | 0.6966 | 0.0000 |
-| ensemble | 3804 | unavailable | 0.0000 | 0.2466 | 0.7369 | 0.0000 | 0.0000 | 0.2908 | 0.6966 | 0.0000 |
+| logistic | 3944 | unavailable | 0.0000 | 0.3058 | 0.6235 | 0.0000 | 0.0000 | 0.3269 | 0.6650 | 0.0000 |
+| catboost | 3904 | unavailable | 0.0000 | 0.3030 | 0.6378 | 0.0000 | 0.0000 | 0.3269 | 0.6650 | 0.0000 |
+| xgboost | 3911 | unavailable | 0.0000 | 0.3199 | 0.6397 | 0.0000 | 0.0000 | 0.3269 | 0.6650 | 0.0000 |
+| ensemble | 3894 | unavailable | 0.0000 | 0.3038 | 0.6366 | 0.0000 | 0.0000 | 0.3269 | 0.6650 | 0.0000 |
 
 AGF-favorite loss analysis is unavailable. Commissioner, jockey, surface and distance indicators are reported as association rates only; they do not establish causality.
 

@@ -158,15 +158,62 @@ def archive_predictions(
     if not (predicted_at < starts).all():
         bad = scored.loc[~(predicted_at < starts), "race_id"].unique().tolist()
         raise ValueError(f"Shadow prediction is not pre-race: {bad[:10]}")
+    # Fetch live AGF & Odds at prediction time from DB
+    race_ids = scored["race_id"].unique().tolist()
+    agf_map = {}
+    odds_map = {}
+    connection = sqlite3.connect(str(db_path), timeout=60)
+    try:
+        connection.row_factory = sqlite3.Row
+        for rid in race_ids:
+            # Query AGF
+            agf_rows = connection.execute("""
+                SELECT horse_id, agf_percent, agf_rank
+                FROM (
+                    SELECT horse_id, agf_percent, agf_rank,
+                           ROW_NUMBER() OVER (PARTITION BY horse_id ORDER BY captured_at DESC) AS rn
+                    FROM agf_snapshots
+                    WHERE race_id = ? AND julianday(captured_at) <= julianday(?)
+                ) WHERE rn = 1
+            """, (rid, stamp)).fetchall()
+            for r in agf_rows:
+                agf_map[(rid, r["horse_id"])] = (r["agf_percent"], r["agf_rank"])
+                
+            # Query Odds
+            odds_rows = connection.execute("""
+                SELECT horse_id, odds
+                FROM (
+                    SELECT horse_id, odds,
+                           ROW_NUMBER() OVER (PARTITION BY horse_id ORDER BY captured_at DESC) AS rn
+                    FROM odds_snapshots
+                    WHERE race_id = ? AND julianday(captured_at) <= julianday(?)
+                ) WHERE rn = 1
+            """, (rid, stamp)).fetchall()
+            for r in odds_rows:
+                odds_map[(rid, r["horse_id"])] = r["odds"]
+    finally:
+        connection.close()
+
     model_version, pipeline_version = version_info()
     rows = []
     run_id = uuid.uuid4().hex
     for index, row in scored.reset_index(drop=True).iterrows():
+        rid = row["race_id"]
+        hid = row["horse_id"]
+        
+        # Get from DB map or fallback to row
+        db_agf = agf_map.get((rid, hid), (None, None))
+        db_odds = odds_map.get((rid, hid), None)
+        
+        agf_percent = db_agf[0] if db_agf[0] is not None else (float(row["agf_percent"]) if "agf_percent" in row and pd.notna(row["agf_percent"]) else None)
+        agf_rank = db_agf[1] if db_agf[1] is not None else (int(row["agf_rank"]) if "agf_rank" in row and pd.notna(row["agf_rank"]) else None)
+        odds = db_odds if db_odds is not None else (float(row["odds"]) if "odds" in row and pd.notna(row["odds"]) else None)
+
         rows.append({
             "prediction_id": f"{run_id}:{index}",
             "model_version": model_version,
             "pipeline_version": pipeline_version,
-            "race_id": row["race_id"], "horse_id": row["horse_id"],
+            "race_id": rid, "horse_id": hid,
             "prediction_time": stamp, "race_start_at": row["race_start_at"],
             "logistic_probability": float(row["logistic_probability"]),
             "catboost_probability": float(row["catboost_probability"]),
@@ -178,9 +225,9 @@ def archive_predictions(
             "feature_contract_version": FEATURE_CONTRACT_VERSION,
             "feature_snapshot_id": int(row["snapshot_id"]),
             "source_request_id": row["source_request_id"],
-            "agf_percent": float(row["agf_percent"]) if pd.notna(row.get("agf_percent")) else None,
-            "agf_rank": int(row["agf_rank"]) if pd.notna(row.get("agf_rank")) else None,
-            "odds": float(row["odds"]) if pd.notna(row.get("odds")) else None,
+            "agf_percent": agf_percent,
+            "agf_rank": agf_rank,
+            "odds": odds,
         })
     archive = pd.DataFrame(rows)
     connection = sqlite3.connect(str(db_path), timeout=60)

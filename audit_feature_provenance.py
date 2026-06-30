@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from feature_contract import MODEL_FEATURES
 
 ROOT = Path(__file__).resolve().parent
 DATASET = ROOT / "output" / "final_benter_dataset.parquet"
@@ -14,14 +15,6 @@ DB = ROOT / "pedigreeall_progress.db"
 REPORT = ROOT / "reports" / "feature_provenance_leakage_audit.md"
 MATRIX = ROOT / "reports" / "feature_provenance_matrix.csv"
 
-MODEL_FEATURES = [
-    "track", "distance", "surface", "race_class", "carried_weight", "draw",
-    "handicap_rating", "days_since_last_race", "last_3_avg_position",
-    "last_5_avg_position", "last_10_avg_position", "surface_win_rate",
-    "distance_win_rate", "track_win_rate", "jockey_horse_win_rate",
-    "trainer_horse_win_rate", "weight_change", "class_change",
-    "distance_change", "surface_change",
-]
 DIRECT_MODEL = {
     "track": ("horse_races.hippodrome", "Race venue"),
     "distance": ("horse_races.distance", "Race distance"),
@@ -29,7 +22,10 @@ DIRECT_MODEL = {
     "race_class": ("horse_races.race_class", "Race class"),
     "carried_weight": ("horse_races.weight", "Declared/actual carried weight"),
     "draw": ("horse_races.gate", "Starting gate"),
-    "handicap_rating": ("horse_races.rating (HP)", "Handicap rating"),
+    "pre_race_handicap_rating": (
+        "lag(horse_races.rating/GET:Tjk/Get.HP)",
+        "Previous race HP; current-race HP is forbidden because it is post-race updated",
+    ),
 }
 ROLLING_MODEL = {
     "days_since_last_race": "Latest prior race date",
@@ -56,6 +52,10 @@ OUTCOME_COLUMNS = {
     "agf_rank": ("output/agf_data.csv", "Potentially pre-race, but no captured_at timestamp"),
     "margin_text": ("builder placeholder", "Post-race margin concept"),
     "margin_lengths_numeric": ("builder placeholder", "Post-race margin concept"),
+    "handicap_rating": (
+        "horse_races.rating (GET:Tjk/Get.HP)",
+        "Post-race history value; forbidden by feature contract",
+    ),
 }
 IDENTITY = {
     "horse_id": "horse_races.horse_key", "race_id": "horse_races.race_id",

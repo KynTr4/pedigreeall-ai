@@ -1,6 +1,6 @@
 # As-Of Join Validation
 
-Generated: 2026-06-27 20:02:57
+Generated: 2026-06-30 12:50:49
 
 Certified feature rows/races: **84 / 8**.
 
@@ -16,6 +16,9 @@ Certified feature rows/races: **84 / 8**.
 | duplicate_snapshots | PASS |
 | append_only_triggers | PASS |
 | outcome_feature_detection | PASS |
+| no_post_start_predictions | PASS |
+| prediction_program_snapshot_before_prediction | PASS |
+| single_final_prediction_run_per_race | PASS |
 | agf_asof | PASS |
 | odds_asof | PASS |
 | no_legacy_result_query | PASS |

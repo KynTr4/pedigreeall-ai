@@ -1,18 +1,18 @@
 # Model Health Dashboard
 
-Generated: 2026-06-29 12:51:34
+Generated: 2026-06-28 19:59:30
 
-## Status: **FAIL**
+## Status: **SHADOW_WARMUP**
 
 - Production ready: **NO**
-- Shadow days: **2 / 90**
-- Healthy gate days: **1 / 90**
+- Shadow days: **0 / 90**
+- Healthy gate days: **0 / 90**
 - Leakage gate: **PASS**
 - Feature contract: **PASS**
 - Snapshot coverage: **PASS**
-- Prediction drift: **CRITICAL**
-- Feature drift: **CRITICAL**
+- Prediction drift: **INSUFFICIENT_DATA**
+- Feature drift: **INSUFFICIENT_DATA**
 - Calibration: **INSUFFICIENT_DATA**
-- ROI: **CERTIFIED**
+- ROI: **NOT CERTIFIED**
 
 Production readiness cannot be granted before 90 completed, healthy shadow dates.
