@@ -18,3 +18,6 @@ dist/
 catboost_info/
 lake/
 *.log
+data/agfv2_raw/
+reports/results_coverage_*.md
+vps_status.py
