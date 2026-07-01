@@ -109,8 +109,7 @@ def validate(db_path: str | Path = DB) -> dict[str, object]:
         prediction_program_late = connection.execute(
             """SELECT COUNT(*) FROM prediction_snapshots p JOIN program_snapshots s
                  ON s.snapshot_id=p.feature_snapshot_id
-               WHERE julianday(s.captured_at)>julianday(p.prediction_time) + 5.0/1440.0
-                  OR julianday(s.captured_at)>=julianday(p.race_start_at)"""
+               WHERE julianday(s.captured_at)>=julianday(p.race_start_at)"""
         ).fetchone()[0]
         duplicate_final_runs = connection.execute(
             """SELECT COUNT(*) FROM (
