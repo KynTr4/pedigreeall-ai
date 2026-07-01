@@ -26,8 +26,8 @@ def classify_race(now: datetime, start: datetime, has_final: bool, has_result: b
     if has_result:
         return "RESULT_CAPTURED"
     if has_final:
-        return "RACE_STARTED" if now >= start else "FINAL_PREDICTION_DONE"
-    if now >= start:
+        return "RESULT_PENDING" if now >= start else "FINAL_PREDICTION_DONE"
+    if now >= start - timedelta(minutes=5):
         return "MISSED_FINAL_WINDOW"
     if now >= start - timedelta(minutes=15):
         return "FINAL_REFRESH_DUE"
@@ -123,52 +123,23 @@ def process(target_date: str, now: datetime, db_path: str | Path = DB_PATH,
             ("build_asof_features.py", [], 1800),
             ("validate_feature_provenance.py", [], 900),
         ):
-            try:
-                result = step_runner(script, args, timeout)
-                steps.append(result)
-            except Exception as e:
-                steps.append({
-                    "script": script, "args": args, "exit_code": 1, "stdout": "", "stderr": str(e)
-                })
-        
-        # Iterate over each due race individually to isolate failures.
-        for race in due:
-            try:
+            result = step_runner(script, args, timeout); steps.append(result)
+            if int(result["exit_code"]) != 0:
+                break
+        prerequisite_ok = not steps or all(int(step["exit_code"]) == 0 for step in steps)
+        if prerequisite_ok:
+            for race in due:
                 result = step_runner(
                     "shadow_mode.py", ["--date", target_date, "--race-id", race["race_id"], "--final-freeze"], 1800
-                )
-                steps.append(result)
-            except Exception as e:
-                steps.append({
-                    "script": "shadow_mode.py",
-                    "args": ["--date", target_date, "--race-id", race["race_id"], "--final-freeze"],
-                    "exit_code": 1,
-                    "stdout": "",
-                    "stderr": str(e)
-                })
-
+                ); steps.append(result)
+                if int(result["exit_code"]) != 0:
+                    break
         with sqlite3.connect(str(db_path), timeout=60) as connection:
             for race in due:
                 start = datetime.fromisoformat(str(race["race_start_at"]).replace("Z", "+00:00"))
                 facts = _facts(connection, race["race_id"], start)
-                
-                # Check if the shadow_mode step failed for this specific race
-                race_step = next((
-                    s for s in steps 
-                    if s.get("script") == "shadow_mode.py" 
-                    and "--race-id" in s.get("args", []) 
-                    and race["race_id"] in s.get("args", [])
-                ), None)
-                
-                failed_step = race_step is not None and int(race_step.get("exit_code", 0)) != 0
-                
-                if failed_step:
-                    status = "ERROR"
-                    warning = f"Prediction runner failed: {race_step.get('stderr') or race_step.get('stdout')}"
-                else:
-                    status = classify_race(now, start, bool(facts["prediction"]), facts["has_result"], True)
-                    warning = None if facts["prediction"] else "Final prediction step did not create an immutable snapshot"
-                
+                status = classify_race(now, start, bool(facts["prediction"]), facts["has_result"], True)
+                warning = None if facts["prediction"] else "Final prediction step did not create an immutable snapshot"
                 _save(connection, race, now, status, facts, warning)
             connection.commit()
     return {"date": target_date, "now": now.isoformat(), "race_count": len(races),
@@ -186,10 +157,8 @@ def main() -> int:
         if not lock.acquired:
             payload.update({"status": "SKIPPED_ALREADY_RUNNING", "owner": lock.metadata})
         else:
-            payload.update(process(args.date, now))
-            # Complete execution process returns success to prevent systemd service failure.
-            # Step-specific diagnostic information is stored in the database and run logs.
-            payload["status"] = "SUCCESS"
+            payload.update(process(args.date, now)); failed = [s for s in payload["steps"] if int(s["exit_code"]) != 0]
+            payload["status"] = "FAILED" if failed else "SUCCESS"
     payload["ended_at"] = utc_now(); write_run_log("race_freeze", payload)
     print(json.dumps(payload, ensure_ascii=False, default=str))
     return 1 if payload["status"] == "FAILED" else 0

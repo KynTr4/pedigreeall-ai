@@ -3,9 +3,10 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from migrate_provenance_schema import apply_migrations
-from run_race_freeze import classify_race, process
+from run_race_freeze import classify_race, main, process
 
 
 class RaceFreezeTests(unittest.TestCase):
@@ -21,9 +22,54 @@ class RaceFreezeTests(unittest.TestCase):
 
     def test_window_classification(self):
         start=datetime(2030,1,1,14,30,tzinfo=timezone.utc)
+        self.assertEqual(classify_race(datetime(2030,1,1,14,14,59,tzinfo=timezone.utc),start,False,False,True),"WAITING")
+        self.assertEqual(classify_race(datetime(2030,1,1,14,15,tzinfo=timezone.utc),start,False,False,True),"FINAL_REFRESH_DUE")
         self.assertEqual(classify_race(datetime(2030,1,1,14,20,tzinfo=timezone.utc),start,False,False,True),"FINAL_REFRESH_DUE")
+        self.assertEqual(classify_race(datetime(2030,1,1,14,25,tzinfo=timezone.utc),start,False,False,True),"MISSED_FINAL_WINDOW")
         self.assertEqual(classify_race(datetime(2030,1,1,14,31,tzinfo=timezone.utc),start,False,False,True),"MISSED_FINAL_WINDOW")
         self.assertEqual(classify_race(datetime(2030,1,1,14,20,tzinfo=timezone.utc),start,False,False,False),"SOURCE_UNSUPPORTED")
+
+    def test_prerequisite_failure_never_calls_shadow_mode(self):
+        now=datetime(2030,1,1,14,20,tzinfo=timezone.utc);calls=[]
+        def fake(script,args,timeout):
+            calls.append(script)
+            exit_code = 1 if script == "build_asof_features.py" else 0
+            return {"script":script,"args":args,"exit_code":exit_code,"stdout":"","stderr":"failed" if exit_code else ""}
+        result=process("2030-01-01",now,self.db,fake)
+        self.assertEqual(calls,["update_race_programs.py","run_agf_update.py","build_asof_features.py"])
+        self.assertNotIn("shadow_mode.py",calls)
+        self.assertEqual(result["steps"][-1]["exit_code"],1)
+
+    def test_scoring_failure_stops_remaining_races(self):
+        with sqlite3.connect(self.db) as c:
+            c.execute("""INSERT INTO program_snapshots(
+                race_id,horse_id,race_start_at,race_no,captured_at,source_endpoint,
+                source_request_id,track,horse_name)
+                VALUES('race-1431','h2','2030-01-01T14:31:00+00:00',2,
+                       '2030-01-01T12:00:00+00:00','test','program-2','Istanbul','AT 2')""")
+        calls=[]
+        def fake(script,args,timeout):
+            calls.append((script,args))
+            exit_code = 1 if script == "shadow_mode.py" else 0
+            return {"script":script,"args":args,"exit_code":exit_code,"stdout":"","stderr":"model failed" if exit_code else ""}
+        result=process("2030-01-01",datetime(2030,1,1,14,20,tzinfo=timezone.utc),self.db,fake)
+        shadow_calls=[call for call in calls if call[0]=="shadow_mode.py"]
+        self.assertEqual(len(shadow_calls),1)
+        self.assertEqual(result["steps"][-1]["exit_code"],1)
+
+    def test_main_returns_one_when_a_step_fails(self):
+        class Lock:
+            acquired=True
+            metadata={}
+            def __enter__(self): return self
+            def __exit__(self,*args): return False
+        failed={"date":"2030-01-01","now":"2030-01-01T14:20:00+00:00","race_count":1,
+                "due_races":["race-1430"],"steps":[{"exit_code":1}]}
+        with patch("run_race_freeze.runner_lock",return_value=Lock()), \
+             patch("run_race_freeze.process",return_value=failed), \
+             patch("run_race_freeze.write_run_log"), \
+             patch("sys.argv",["run_race_freeze.py","--date","2030-01-01"]):
+            self.assertEqual(main(),1)
 
     def test_final_prediction_is_created_once_and_frozen(self):
         now=datetime(2030,1,1,14,20,tzinfo=timezone.utc);calls=[]
