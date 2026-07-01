@@ -322,9 +322,9 @@ def main() -> int:
     if args.final_freeze and not targets.empty:
         starts = pd.to_datetime(targets["race_start_at"], utc=True, errors="raise")
         lower = starts - pd.Timedelta(minutes=15)
-        upper = starts - pd.Timedelta(minutes=5)
-        if not ((now >= lower) & (now <= upper)).all():
-            raise RuntimeError("Final prediction is outside the race_start_at -15/-5 minute window")
+        upper = starts
+        if not ((now >= lower) & (now < upper)).all():
+            raise RuntimeError("Final prediction is outside the race_start_at -15/0 minute window")
         if final_prediction_exists(args.race_id, targets.iloc[0]["race_start_at"], DB):
             print({"mode": "shadow_mode", "status": "final_prediction_already_frozen", "race_id": args.race_id})
             return 0
