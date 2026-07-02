@@ -250,6 +250,10 @@ def health(connection: sqlite3.Connection, filters: dict[str, Any]) -> dict[str,
                GROUP BY status ORDER BY status""", date_params
         )
     ]
+    try:
+        details = json.loads(monitoring_data.get("details_json") or "{}")
+    except json.JSONDecodeError:
+        details = {}
     return {
         "prediction_missing_races": max(0, int(program_races) - int(predicted_races)),
         "result_unmatched_races": max(0, int(predicted_races) - int(result_races)),
@@ -259,6 +263,7 @@ def health(connection: sqlite3.Connection, filters: dict[str, Any]) -> dict[str,
         "drift_status": {
             "prediction": monitoring_data.get("prediction_drift_status", "UNKNOWN"),
             "feature": monitoring_data.get("feature_drift_status", "UNKNOWN"),
+            "target": details.get("target_drift_status", "UNKNOWN"),
         },
         "snapshot_coverage": monitoring_data.get("snapshot_coverage_pass"),
         "pipeline_status": monitoring_data.get("pipeline_status", "UNKNOWN"),

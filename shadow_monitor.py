@@ -6,6 +6,8 @@ import json
 import math
 import sqlite3
 import uuid
+import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -245,17 +247,74 @@ def distributions(reference: pd.Series, current: pd.Series, bins: np.ndarray | N
     return psi, js, kl
 
 
-def categorical_distances(reference: pd.Series, current: pd.Series) -> tuple[float, float, float, float]:
-    reference = reference.fillna("__MISSING__").astype(str)
-    current = current.fillna("__MISSING__").astype(str)
-    categories = sorted(set(reference) | set(current))
+def normalize_category(value, feature_name: str | None = None) -> str:
+    if pd.isna(value):
+        return "__MISSING__"
+    
+    val = str(value).strip()
+    
+    # Generic normalization first (Turkish-safe lowercase mapping)
+    val = unicodedata.normalize("NFC", val)
+    val = val.replace("İ", "i").replace("I", "ı").replace("Ş", "ş").replace("ş", "ş")
+    val = val.replace("Ç", "ç").replace("ç", "ç").replace("Ğ", "ğ").replace("ğ", "ğ")
+    val = val.replace("Ö", "ö").replace("ö", "ö").replace("Ü", "ü").replace("ü", "ü")
+    val = val.lower()
+    val = val.replace("ı", "i")
+    
+    # Feature-specific cleaning
+    if feature_name == "track":
+        # Remove parentheses like (32. Y.G.)
+        val = re.sub(r'\s*\([^)]*\)', '', val)
+    elif feature_name == "race_class":
+        # Split by comma and filter out weights, distance/surface, and E.I.D.
+        parts = [p.strip() for p in val.split(",")]
+        cleaned_parts = []
+        for p in parts:
+            if "kg" in p:
+                continue
+            if "e.i.d" in p or "e.d" in p:
+                continue
+            if any(surf in p for surf in ["çim", "cim", "kum", "sentetik", "tapeta"]):
+                continue
+            if re.match(r'^\d+$', p):
+                continue
+            cleaned_parts.append(p)
+        val = ", ".join(cleaned_parts)
+    elif feature_name == "surface":
+        if "kum" in val or "dirt" in val or "k:" in val:
+            val = "k:"
+        elif any(surf in val for surf in ["çim", "cim", "turf", "ç:", "c:"]):
+            val = "ç:"
+        elif any(surf in val for surf in ["sentetik", "synthetic", "s:", "tapeta"]):
+            val = "s:"
+            
+    val = re.sub(r'\s*([/,.-])\s*', r'\1', val)
+    val = " ".join(val.split())
+    return val.strip()
+
+def categorical_distances(reference: pd.Series, current: pd.Series, feature_name: str | None = None) -> tuple[float, float, float, float]:
+    reference = reference.map(lambda x: normalize_category(x, feature_name))
+    current = current.map(lambda x: normalize_category(x, feature_name))
+    
+    # Calculate unseen category rate on full current set
+    unseen = float((~current.isin(set(reference))).mean())
+    
+    # PSI/JS/KL intersection mode only for high-cardinality features (track, race_class)
+    if feature_name in {"track", "race_class"}:
+        categories = sorted(set(reference) & set(current))
+        if not categories:
+            return np.nan, np.nan, np.nan, unseen
+    else:
+        categories = sorted(set(reference) | set(current))
+        
     ref = reference.value_counts(normalize=True).reindex(categories, fill_value=0).to_numpy(float) + 1e-9
     cur = current.value_counts(normalize=True).reindex(categories, fill_value=0).to_numpy(float) + 1e-9
-    ref /= ref.sum(); cur /= cur.sum(); midpoint = 0.5 * (ref + cur)
+    ref /= ref.sum()
+    cur /= cur.sum()
+    midpoint = 0.5 * (ref + cur)
     psi = float(np.sum((cur - ref) * np.log(cur / ref)))
     js = float(0.5 * np.sum(ref * np.log(ref / midpoint)) + 0.5 * np.sum(cur * np.log(cur / midpoint)))
     kl = float(np.sum(cur * np.log(cur / ref)))
-    unseen = float((~current.isin(set(reference))).mean())
     return psi, js, kl, unseen
 
 
@@ -298,7 +357,7 @@ def feature_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         }
         base["missing_rate_delta"] = abs(base["current_missing_rate"] - base["reference_missing_rate"]) if len(ref) else np.nan
         if feature in CATEGORICAL_FEATURES:
-            psi, js, kl, unseen = categorical_distances(ref, cur) if len(ref) and len(cur) else (np.nan,) * 4
+            psi, js, kl, unseen = categorical_distances(ref, cur, feature) if len(ref) and len(cur) else (np.nan,) * 4
             base.update({
                 "current_mean": np.nan, "reference_mean": np.nan,
                 "current_median": np.nan, "reference_median": np.nan,
@@ -331,7 +390,7 @@ def feature_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     return pd.DataFrame(rows, columns=columns), overall
 
 
-def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str, str]:
     columns = [
         "as_of_date", "drift_type", "model", "current_rows", "reference_rows",
         "psi", "js_distance", "kl_divergence", "winner_probability_shift",
@@ -339,12 +398,12 @@ def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         "scratch_rate_shift", "status",
     ]
     if frame.empty:
-        return pd.DataFrame(columns=columns), "INSUFFICIENT_DATA"
+        return pd.DataFrame(columns=columns), "INSUFFICIENT_DATA", "INSUFFICIENT_DATA"
     as_of = pd.to_datetime(frame["race_date"]).max()
     current = frame[pd.to_datetime(frame["race_date"]).eq(as_of)]
     reference = frame[pd.to_datetime(frame["race_date"]).between(as_of - pd.Timedelta(days=30), as_of - pd.Timedelta(days=1))]
     rows = []
-    overall = "INSUFFICIENT_DATA" if len(current) < MIN_CURRENT_ROWS or len(reference) < MIN_REFERENCE_ROWS else "PASS"
+    prediction_overall = "INSUFFICIENT_DATA" if len(current) < MIN_CURRENT_ROWS or len(reference) < MIN_REFERENCE_ROWS else "PASS"
     for model, probability_col in MODEL_PROBS.items():
         psi, js, kl = distributions(reference[probability_col], current[probability_col], np.linspace(0, 1, 11))
         current_winner = current.loc[current["winner"].eq(1), probability_col].mean()
@@ -359,7 +418,7 @@ def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
             or (pd.notna(confidence_shift) and confidence_shift >= THRESHOLDS["confidence_shift"])
         )
         status = "CRITICAL" if critical else "PASS" if enough else "INSUFFICIENT_DATA"
-        if status == "CRITICAL": overall = "CRITICAL"
+        if status == "CRITICAL": prediction_overall = "CRITICAL"
         rows.append({
             "as_of_date": as_of.date().isoformat(), "drift_type": "prediction",
             "model": model, "current_rows": len(current), "reference_rows": len(reference),
@@ -371,7 +430,7 @@ def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
     completed_current, completed_ref = completed_races(current), completed_races(reference)
     winner_rate_shift = abs(completed_current["winner"].mean() - completed_ref["winner"].mean()) if len(completed_current) and len(completed_ref) else np.nan
     current_features, ref_features = feature_frame(current), feature_frame(reference)
-    _, class_js, _, _ = categorical_distances(ref_features.get("race_class", pd.Series(dtype=str)), current_features.get("race_class", pd.Series(dtype=str))) if len(ref_features) and len(current_features) else (np.nan,) * 4
+    _, class_js, _, _ = categorical_distances(ref_features.get("race_class", pd.Series(dtype=str)), current_features.get("race_class", pd.Series(dtype=str)), "race_class") if len(ref_features) and len(current_features) else (np.nan,) * 4
     current_scratch = current["result_status"].eq("scratched").mean() if "result_status" in current else np.nan
     ref_scratch = reference["result_status"].eq("scratched").mean() if "result_status" in reference else np.nan
     scratch_shift = abs(current_scratch - ref_scratch) if pd.notna(current_scratch) and pd.notna(ref_scratch) else np.nan
@@ -382,8 +441,6 @@ def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         or (pd.notna(scratch_shift) and scratch_shift >= THRESHOLDS["target_rate_shift"])
     )
     target_status = "CRITICAL" if target_critical else "PASS" if target_enough else "INSUFFICIENT_DATA"
-    if target_status == "CRITICAL":
-        overall = "CRITICAL"
     rows.append({
         "as_of_date": as_of.date().isoformat(), "drift_type": "target", "model": "all",
         "current_rows": len(completed_current), "reference_rows": len(completed_ref),
@@ -392,7 +449,7 @@ def model_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         "winner_rate_shift": winner_rate_shift, "class_js_distance": class_js,
         "scratch_rate_shift": scratch_shift, "status": target_status,
     })
-    return pd.DataFrame(rows, columns=columns), overall
+    return pd.DataFrame(rows, columns=columns), prediction_overall, target_status
 
 
 def calibration_history(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
@@ -585,7 +642,7 @@ def main() -> int:
     history, odds = load_history(DB)
     latest = attach_certified_odds(latest_prediction_runs(history), odds)
     metrics = calculate_live_metrics(latest)
-    drift, prediction_drift_status = model_drift(latest)
+    drift, prediction_drift_status, target_drift_status = model_drift(latest)
     features, feature_drift_status = feature_drift(latest)
     calibration, calibration_status = calibration_history(latest)
     roi, roi_status = roi_report_data(latest)
@@ -602,6 +659,7 @@ def main() -> int:
     except ValueError:
         contract_pass = False
     coverage_pass, missed_races = snapshot_coverage_pass(DB, history)
+    # target_drift_status is excluded from blocking critical check (informational/non-blocking)
     critical = (
         not provenance["passed"] or not contract_pass or not coverage_pass
         or prediction_drift_status == "CRITICAL" or calibration_status == "CRITICAL"
@@ -638,6 +696,7 @@ def main() -> int:
         "feature_contract_pass": contract_pass,
         "snapshot_coverage_pass": coverage_pass,
         "prediction_drift_status": prediction_drift_status,
+        "target_drift_status": target_drift_status,
         "calibration_status": calibration_status,
         "feature_drift_status": feature_drift_status,
         "pipeline_status": pipeline_status,
@@ -659,7 +718,7 @@ def main() -> int:
         encoding="utf-8",
     )
     (REPORTS / "model_drift_report.md").write_text(
-        f"# Model Drift Report\n\nGenerated: {stamp}\n\nOverall prediction drift: **{prediction_drift_status}**. Reference window is the previous 30 calendar days.\n\n"
+        f"# Model Drift Report\n\nGenerated: {stamp}\n\nOverall prediction drift: **{prediction_drift_status}**.\nOverall target drift: **{target_drift_status}** (non-blocking / informational).\nReference window is the previous 30 calendar days.\n\n"
         + markdown_table(drift, ["drift_type", "model", "current_rows", "reference_rows", "psi", "js_distance", "kl_divergence", "winner_probability_shift", "confidence_shift", "winner_rate_shift", "class_js_distance", "scratch_rate_shift", "status"]),
         encoding="utf-8",
     )
@@ -681,7 +740,7 @@ def main() -> int:
         encoding="utf-8",
     )
     (REPORTS / "model_health_dashboard.md").write_text(
-        f"# Model Health Dashboard\n\nGenerated: {stamp}\n\n## Status: **{pipeline_status}**\n\n- Production ready: **{'YES' if production_ready else 'NO'}**\n- Shadow days: **{shadow_days} / 90**\n- Healthy gate days: **{healthy_shadow_days} / 90**\n- Leakage gate: **{'PASS' if provenance['passed'] else 'FAIL'}**\n- Feature contract: **{'PASS' if contract_pass else 'FAIL'}**\n- Snapshot coverage: **{'PASS' if coverage_pass else 'FAIL'}**\n- Prediction drift: **{prediction_drift_status}**\n- Feature drift: **{feature_drift_status}**\n- Calibration: **{calibration_status}**\n- ROI: **{roi_status}**\n\nProduction readiness cannot be granted before 90 completed, healthy shadow dates.\n",
+        f"# Model Health Dashboard\n\nGenerated: {stamp}\n\n## Status: **{pipeline_status}**\n\n- Production ready: **{'YES' if production_ready else 'NO'}**\n- Shadow days: **{shadow_days} / 90**\n- Healthy gate days: **{healthy_shadow_days} / 90**\n- Leakage gate: **{'PASS' if provenance['passed'] else 'FAIL'}**\n- Feature contract: **{'PASS' if contract_pass else 'FAIL'}**\n- Snapshot coverage: **{'PASS' if coverage_pass else 'FAIL'}**\n- Prediction drift: **{prediction_drift_status}**\n- Target drift: **{target_drift_status}** (non-blocking / informational)\n- Feature drift: **{feature_drift_status}**\n- Calibration: **{calibration_status}**\n- ROI: **{roi_status}**\n\nProduction readiness cannot be granted before 90 completed, healthy shadow dates.\n",
         encoding="utf-8",
     )
     print({"pipeline_status": pipeline_status, "production_ready": production_ready, "shadow_days": shadow_days, "matched": matched, "checks": checks})

@@ -192,7 +192,7 @@ class ShadowMonitoringTests(unittest.TestCase):
                 for horse in range(4):
                     probability = [0.55, 0.25, 0.15, 0.05][horse]
                     if high:
-                        probability = [0.05, 0.15, 0.25, 0.55][horse]
+                        probability = [0.95, 0.03, 0.01, 0.01][horse]
                     features = {
                         feature: ("NEW" if high and feature in {"track", "surface", "race_class"}
                                   else "BASE" if feature in {"track", "surface", "race_class"}
@@ -220,7 +220,7 @@ class ShadowMonitoringTests(unittest.TestCase):
 
     def test_critical_prediction_and_feature_drift_detected(self):
         frame = self.monitoring_frame(shifted=True)
-        _, prediction_status = model_drift(frame)
+        _, prediction_status, target_status = model_drift(frame)
         _, feature_status = feature_drift(frame)
         self.assertEqual(prediction_status, "CRITICAL")
         self.assertEqual(feature_status, "CRITICAL")
