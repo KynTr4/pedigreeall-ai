@@ -76,7 +76,7 @@
   <div class="row g-3">
     <div class="col-md-2">
       <label class="small text-secondary text-uppercase fw-semibold mb-1">Tarih</label>
-      <input name="date" type="date" class="form-control form-control-sm bg-dark text-white border-secondary">
+      <input name="date" type="date" value="{{ selected_date }}" class="form-control form-control-sm bg-dark text-white border-secondary">
     </div>
     <div class="col-md-2">
       <label class="small text-secondary text-uppercase fw-semibold mb-1">Pist</label>
@@ -406,15 +406,6 @@
     'Logistic': 'text-logistic',
     'Ensemble': 'text-ensemble'
   };
-
-  const getLocalTodayDate = () => {
-    const d = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  };
-
-  // Set default date to 2026-06-30 since we have rich June 30th backfill
-  document.querySelector('input[name="date"]').value = "2026-06-30";
 
   // Build backend query parameters from checklist & form
   const getQueryString = (includePage = false) => {

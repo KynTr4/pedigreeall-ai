@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import uvicorn
@@ -35,6 +36,7 @@ from app_config import (
     WEB_PASSWORD,
     WEB_PORT,
     WEB_USERNAME,
+    TZ_NAME,
 )
 from performance_queries import (
     chart_data as query_performance_chart,
@@ -390,14 +392,27 @@ def static_live_results():
     return FileResponse(WEB_ROOT / "static" / "live-results.js", media_type="application/javascript")
 
 
+def server_today() -> str:
+    return datetime.now(ZoneInfo(TZ_NAME)).date().isoformat()
+
+
+def _page_date(value: str | None) -> str:
+    if value is None:
+        return server_today()
+    try:
+        return validate_date(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
     return TEMPLATES.TemplateResponse(request, "dashboard.html", {"data": dashboard_status()})
 
 
 @app.get("/races", response_class=HTMLResponse)
-def races_page(request: Request):
-    return TEMPLATES.TemplateResponse(request, "races.html", {})
+def races_page(request: Request, date: str | None = None):
+    return TEMPLATES.TemplateResponse(request, "races.html", {"selected_date": _page_date(date)})
 
 
 @app.get("/predictions", response_class=HTMLResponse)
@@ -406,13 +421,17 @@ def predictions_page(request: Request):
 
 
 @app.get("/performance", response_class=HTMLResponse)
-def performance_page(request: Request):
-    return TEMPLATES.TemplateResponse(request, "performance.html", {})
+def performance_page(request: Request, date: str | None = None):
+    return TEMPLATES.TemplateResponse(
+        request, "performance.html", {"selected_date": _page_date(date)}
+    )
 
 
 @app.get("/diagnostics", response_class=HTMLResponse)
-def diagnostics_page(request: Request):
-    return TEMPLATES.TemplateResponse(request, "diagnostics.html", {})
+def diagnostics_page(request: Request, date: str | None = None):
+    return TEMPLATES.TemplateResponse(
+        request, "diagnostics.html", {"selected_date": _page_date(date)}
+    )
 
 
 @app.get("/diagnostics/race/{race_id}", response_class=HTMLResponse)
@@ -421,8 +440,10 @@ def diagnostics_race_page(request: Request, race_id: str):
 
 
 @app.get("/bet-simulator", response_class=HTMLResponse)
-def bet_simulator_page(request: Request):
-    return TEMPLATES.TemplateResponse(request, "bet_simulator.html", {})
+def bet_simulator_page(request: Request, date: str | None = None):
+    return TEMPLATES.TemplateResponse(
+        request, "bet_simulator.html", {"selected_date": _page_date(date)}
+    )
 
 
 @app.get("/reports", response_class=HTMLResponse)

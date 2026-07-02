@@ -8,7 +8,7 @@
 <div id="live-results-panel" class="panel live-results-panel mb-4"><div><div class="eyebrow">GLOBAL SONUÇ KONTROLÜ</div><span>Son kontrol: <b data-live-checked>Henüz yok</b></span> · <span>Sonraki: <b data-live-next>—</b></span> · <span>Server: <b data-live-server>—</b></span></div><div class="live-state"><span data-live-status class="status-pill warn">BEKLİYOR</span><strong data-live-countdown>05:00</strong></div><div data-live-tracks class="live-track-list"></div></div>
 
 <form id="performance-filters" class="panel performance-filters mb-4">
-  <div><label for="filter-date">Tarih</label><input id="filter-date" name="date" type="date" class="form-control"></div>
+  <div><label for="filter-date">Tarih</label><input id="filter-date" name="date" type="date" value="{{ selected_date }}" class="form-control"></div>
   <div><label for="filter-track">Hipodrom</label><select id="filter-track" name="track" class="form-select"><option value="">Tümü</option></select></div>
   <div><label for="filter-model">Model</label><select id="filter-model" name="model" class="form-select"><option value="">Tümü</option><option>Logistic</option><option>CatBoost</option><option>XGBoost</option><option>Ensemble</option></select></div>
   <div><label for="filter-outcome">Sonuç</label><select id="filter-outcome" name="outcome" class="form-select"><option value="all">Tümü</option><option value="correct">Sadece Doğrular</option><option value="incorrect">Sadece Yanlışlar</option></select></div>
@@ -48,8 +48,6 @@
   const esc = value => String(value ?? '—').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const num = (value, digits=1) => Number(value || 0).toFixed(digits);
   const signed = (value, suffix='') => `${Number(value || 0) >= 0 ? '+' : ''}${num(value)}${suffix}`;
-  const localDate=()=>{const d=new Date(),p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`};
-  document.getElementById('filter-date').value=localDate();
   const query = (includePage=false) => {
     const data = new FormData(document.getElementById('performance-filters')); const q = new URLSearchParams();
     for (const [key,value] of data) if (value) q.set(key,value); if (includePage) q.set('page',page); return q.toString();
@@ -71,7 +69,7 @@
   const loadHistory = async () => renderHistory(await fetchJson(`/api/performance/history?${query(true)}`));
   const loadTrackOptions=async()=>{const date=document.getElementById('filter-date').value,current=document.getElementById('filter-track').value,data=await fetchJson(`/api/race-day/tracks?date=${date}`),select=document.getElementById('filter-track');select.innerHTML='<option value="">Tümü</option>'+data.tracks.map(t=>`<option>${esc(t.track)}</option>`).join('');if([...select.options].some(o=>o.value===current))select.value=current;return data;};
   const load = async () => { const badge=document.getElementById('performance-loading'); badge.textContent='YÜKLENİYOR';badge.className='status-pill warn'; try { const q=query(),date=document.getElementById('filter-date').value,track=document.getElementById('filter-track').value,raceQ=`date=${date}${track?'&track='+encodeURIComponent(track):''}`; const [summary,models,charts,history,trackCoverage,raceDay]=await Promise.all([fetchJson(`/api/performance/summary?${q}`),fetchJson(`/api/performance/models?${q}`),fetchJson(`/api/performance/chart?${q}`),fetchJson(`/api/performance/history?${query(true)}`),fetchJson(`/api/race-day/tracks?date=${date}`),fetchJson(`/api/race-day/races?${raceQ}`)]); renderSummary(summary);renderModels(models);renderCharts(charts);renderHistory(history);renderTrackCoverage(trackCoverage);renderRaceDay(raceDay);badge.textContent='GÜNCEL';badge.className='status-pill ok'; } catch(error){badge.textContent='HATA';badge.className='status-pill warn';console.error(error);} };
-  window.refreshPerformance=load; document.getElementById('performance-filters').onsubmit=e=>{e.preventDefault();page=1;load();}; document.getElementById('filter-date').onchange=()=>loadTrackOptions().then(load);document.getElementById('clear-filters').onclick=()=>{document.getElementById('performance-filters').reset();document.getElementById('filter-date').value=localDate();page=1;loadTrackOptions().then(load);}; loadTrackOptions().then(load);
+  window.refreshPerformance=load; document.getElementById('performance-filters').onsubmit=e=>{e.preventDefault();page=1;load();}; document.getElementById('filter-date').onchange=()=>loadTrackOptions().then(load);document.getElementById('clear-filters').onclick=()=>{document.getElementById('performance-filters').reset();page=1;loadTrackOptions().then(load);}; loadTrackOptions().then(load);
 })();
 </script>
 <script src="/static/live-results.js"></script><script>new LiveResultsPoller({date:()=>document.getElementById('filter-date').value,refresh:()=>window.refreshPerformance()});</script>

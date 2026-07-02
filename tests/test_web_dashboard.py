@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -84,6 +85,27 @@ class WebDashboardTests(unittest.TestCase):
             self.assertEqual(response.status_code, 401)
             self.assertIn("Basic", response.headers["www-authenticate"])
             self.assertEqual(self.client.get(path, headers=self.auth).status_code, 200)
+
+    @patch("web_app.server_today", return_value="2026-07-02")
+    def test_date_pages_default_to_server_today_and_honor_url(self, _server_today):
+        inputs = {
+            "/bet-simulator": '<input name="date" type="date" value="{}"',
+            "/performance": '<input id="filter-date" name="date" type="date" value="{}"',
+            "/diagnostics": '<input name="date" type="date" value="{}"',
+            "/races": '<input id="race-day-date" type="date" value="{}"',
+        }
+        for path, input_html in inputs.items():
+            with self.subTest(path=path, source="server"):
+                page = self.client.get(path, headers=self.auth).text
+                self.assertIn(input_html.format("2026-07-02"), page)
+                self.assertNotIn("localStorage", page)
+                self.assertNotIn("sessionStorage", page)
+            with self.subTest(path=path, source="url"):
+                page = self.client.get(f"{path}?date=2026-06-30", headers=self.auth).text
+                self.assertIn(input_html.format("2026-06-30"), page)
+
+        bet_page = self.client.get("/bet-simulator", headers=self.auth).text
+        self.assertNotIn('value = "2026-06-30"', bet_page)
 
     def test_database_connection_is_enforced_read_only(self):
         with web_app.readonly_connection() as connection:
