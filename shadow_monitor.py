@@ -378,9 +378,23 @@ def feature_drift(frame: pd.DataFrame) -> tuple[pd.DataFrame, str]:
                 "unseen_category_rate": np.nan,
             })
         enough = len(cur) >= MIN_CURRENT_ROWS and len(ref) >= MIN_REFERENCE_ROWS
+        # Suppress missing_rate_delta CRITICAL when the reference was almost
+        # entirely missing (>= 95%) and current is *improving* (filling in).
+        # This prevents false-positive alarms when a feature is newly
+        # available (e.g. horse_races fallback) but wasn't in reference.
+        ref_miss = base["reference_missing_rate"]
+        cur_miss = base["current_missing_rate"]
+        missing_improving = (
+            pd.notna(ref_miss) and ref_miss >= 0.95 and
+            pd.notna(cur_miss) and cur_miss < ref_miss
+        )
+        missing_rate_critical = (
+            not missing_improving and
+            base["missing_rate_delta"] >= THRESHOLDS["missing_rate_delta"]
+        )
         critical = enough and (
             psi >= THRESHOLDS["psi"] or js >= THRESHOLDS["js"] or kl >= THRESHOLDS["kl"]
-            or base["missing_rate_delta"] >= THRESHOLDS["missing_rate_delta"]
+            or missing_rate_critical
             or (pd.notna(base["unseen_category_rate"]) and base["unseen_category_rate"] >= THRESHOLDS["unseen_category_rate"])
         )
         status = "CRITICAL" if critical else "PASS" if enough else "INSUFFICIENT_DATA"
