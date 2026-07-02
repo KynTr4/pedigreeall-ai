@@ -76,7 +76,11 @@ class WebDashboardTests(unittest.TestCase):
                 )
         web_app._PERFORMANCE_CACHE.clear()
 
-    def seed_rank_comparison_race(self, index: int, ranks: dict[str, int], agf_rank: int):
+    def seed_rank_comparison_race(
+        self, index: int, ranks: dict[str, int], agf_rank: int,
+        result_odds: float | None = 3.0, track: str = "İstanbul",
+        surface: str = "Kum", distance: int = 1400, race_class: str = "Handikap",
+    ):
         race_id = f"rank-comparison-{index}"
         start = datetime(2031, 1, index, 15, 0, tzinfo=timezone.utc)
         captured = start - timedelta(hours=2)
@@ -100,8 +104,8 @@ class WebDashboardTests(unittest.TestCase):
                            source_endpoint,source_request_id,horse_name,track,surface,distance,race_class)
                        VALUES(?,?,?,?,?,'test',?,?,?,?,?,?)""",
                     (race_id, f"h{horse}", start.isoformat(), index, captured.isoformat(),
-                     f"rank-program-{index}-{horse}", f"AT {horse}", "İstanbul",
-                     "Kum", 1400, "Handikap"),
+                     f"rank-program-{index}-{horse}", f"AT {horse}", track,
+                     surface, distance, race_class),
                 )
                 snapshot_ids[horse] = cursor.lastrowid
             for horse in range(1, 7):
@@ -128,7 +132,7 @@ class WebDashboardTests(unittest.TestCase):
                        VALUES(?,?,?,?,?,'test',?,?,?,'finished')""",
                     (race_id, f"h{horse}", start.isoformat(), index,
                      (start + timedelta(hours=1)).isoformat(),
-                     f"rank-result-{index}-{horse}", 1 if horse == 1 else horse, 3.0),
+                     f"rank-result-{index}-{horse}", 1 if horse == 1 else horse, result_odds),
                 )
         web_app._PERFORMANCE_CACHE.clear()
 
@@ -349,6 +353,76 @@ class WebDashboardTests(unittest.TestCase):
             "/api/bet-simulator/model-comparison?model=CatBoost&stake=20", headers=self.auth
         ).json()["models"]
         self.assertEqual([row["model"] for row in single], ["CatBoost"])
+
+    def test_shadow_monitor_metrics_filters_missing_odds_and_duplicate_runs(self):
+        self.seed_rank_comparison_race(1, {
+            "Ensemble": 1, "Logistic": 3, "CatBoost": 5, "XGBoost": 6,
+        }, agf_rank=4, track="İstanbul", distance=1400)
+        self.seed_rank_comparison_race(2, {
+            "Ensemble": 4, "Logistic": 4, "CatBoost": 4, "XGBoost": 4,
+        }, agf_rank=4, track="Ankara", surface="Çim", distance=2000)
+        self.seed_rank_comparison_race(3, {
+            "Ensemble": 1, "Logistic": 1, "CatBoost": 1, "XGBoost": 1,
+        }, agf_rank=1, result_odds=None, track="İstanbul", surface="Sentetik", distance=1000)
+
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                """INSERT INTO prediction_snapshots(
+                       prediction_id,model_version,pipeline_version,race_id,horse_id,
+                       prediction_time,race_start_at,logistic_probability,
+                       catboost_probability,xgboost_probability,ensemble_probability,
+                       predicted_rank,feature_hash,feature_values_json,
+                       feature_contract_version,feature_snapshot_id,source_request_id,agf_rank,odds)
+                   SELECT prediction_id||'-older',model_version,pipeline_version,race_id,horse_id,
+                          datetime(prediction_time,'-5 minutes'),race_start_at,
+                          logistic_probability,catboost_probability,xgboost_probability,
+                          ensemble_probability,predicted_rank,feature_hash,
+                          feature_values_json,feature_contract_version,feature_snapshot_id,
+                          source_request_id,agf_rank,odds
+                   FROM prediction_snapshots WHERE race_id='rank-comparison-1'"""
+            )
+        web_app._PERFORMANCE_CACHE.clear()
+
+        params = "?date_from=2031-01-01&date_to=2031-01-03&model=Ensemble"
+        summary = self.client.get(
+            "/api/shadow-monitor/summary" + params, headers=self.auth
+        ).json()
+        self.assertEqual(summary["total_evaluated_races"], 3)
+        self.assertEqual(summary["total_predictions"], 3)
+        self.assertAlmostEqual(summary["top1_accuracy"], 200 / 3)
+        self.assertAlmostEqual(summary["top3_accuracy"], 200 / 3)
+        self.assertAlmostEqual(summary["top5_accuracy"], 100.0)
+        self.assertEqual(summary["roi_bet_count"], 2)
+        self.assertAlmostEqual(summary["roi_percent"], 50.0)
+        self.assertAlmostEqual(summary["net_profit"], 1.0)
+
+        date_filtered = self.client.get(
+            "/api/shadow-monitor/summary?date_from=2031-01-02&date_to=2031-01-02",
+            headers=self.auth,
+        ).json()
+        self.assertEqual(date_filtered["total_evaluated_races"], 1)
+        track_filtered = self.client.get(
+            "/api/shadow-monitor/summary?date_from=2031-01-01&date_to=2031-01-03&track=Ankara",
+            headers=self.auth,
+        ).json()
+        self.assertEqual(track_filtered["total_evaluated_races"], 1)
+
+        odds_only = self.client.get(
+            "/api/shadow-monitor/models"
+            "?date_from=2031-01-01&date_to=2031-01-03&model=Ensemble&odds_only=true",
+            headers=self.auth,
+        ).json()["models"][0]
+        self.assertEqual(odds_only["evaluated_race_count"], 2)
+
+        segments = self.client.get(
+            "/api/shadow-monitor/segments" + params, headers=self.auth
+        ).json()
+        self.assertEqual({row["group"] for row in segments["surface"]},
+                         {"Kum", "Çim", "Sentetik"})
+        self.assertEqual(self.client.get("/shadow-monitor", headers=self.auth).status_code, 200)
+        self.assertIn("race_date", self.client.get(
+            "/api/shadow-monitor/export.csv" + params, headers=self.auth
+        ).text)
 
     def test_performance_history_paginates_at_100_rows(self):
         for index in range(26):

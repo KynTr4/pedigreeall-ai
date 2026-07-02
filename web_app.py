@@ -15,7 +15,7 @@ import subprocess
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -66,6 +66,15 @@ from bet_simulator_queries import (
     export_rows as query_bet_export, history as query_bet_history,
     model_comparison as query_bet_model_comparison,
     normalize_bet_filters, summary as query_bet_summary,
+)
+from shadow_monitor_queries import (
+    export_csv as query_shadow_export,
+    health as query_shadow_health,
+    models as query_shadow_models,
+    normalize_shadow_filters,
+    segments as query_shadow_segments,
+    summary as query_shadow_summary,
+    trends as query_shadow_trends,
 )
 
 WEB_ROOT = PROJECT_ROOT / "web"
@@ -447,6 +456,15 @@ def bet_simulator_page(request: Request, date: str | None = None):
     )
 
 
+@app.get("/shadow-monitor", response_class=HTMLResponse)
+def shadow_monitor_page(request: Request):
+    today = server_today()
+    start = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=89)).strftime("%Y-%m-%d")
+    return TEMPLATES.TemplateResponse(
+        request, "shadow_monitor.html", {"date_from": start, "date_to": today}
+    )
+
+
 @app.get("/reports", response_class=HTMLResponse)
 def reports_page(request: Request, name: str | None = None):
     selected = name if name in ALLOWED_REPORTS else None
@@ -761,9 +779,108 @@ def api_bet_export(date: str | None = None, track: str | None = None, model: str
                              headers={"Content-Disposition":'attachment; filename="bet_simulator.csv"'})
 
 
+def _shadow_args(date_from=None, date_to=None, track=None, model=None, distance=None,
+                 surface=None, field_size=None, evaluated_only=True, odds_only=False):
+    end = date_to or server_today()
+    start = date_from or (
+        datetime.strptime(end, "%Y-%m-%d") - timedelta(days=89)
+    ).strftime("%Y-%m-%d")
+    try:
+        return normalize_shadow_filters(
+            start, end, track, model, distance, surface, field_size,
+            evaluated_only, odds_only,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _shadow_endpoint(query, cache_name, date_from=None, date_to=None, track=None,
+                     model=None, distance=None, surface=None, field_size=None,
+                     evaluated_only=True, odds_only=False):
+    filters = _shadow_args(
+        date_from, date_to, track, model, distance, surface, field_size,
+        evaluated_only, odds_only,
+    )
+    return _performance_cached(cache_name, filters, query)
+
+
+@app.get("/api/shadow-monitor/summary")
+def api_shadow_summary(date_from: str | None = None, date_to: str | None = None,
+                       track: str | None = None, model: str | None = None,
+                       distance: str | None = None, surface: str | None = None,
+                       field_size: str | None = None, evaluated_only: bool = True,
+                       odds_only: bool = False):
+    return _shadow_endpoint(query_shadow_summary, "shadow_summary", date_from, date_to,
+                            track, model, distance, surface, field_size,
+                            evaluated_only, odds_only)
+
+
+@app.get("/api/shadow-monitor/models")
+def api_shadow_models(date_from: str | None = None, date_to: str | None = None,
+                      track: str | None = None, model: str | None = None,
+                      distance: str | None = None, surface: str | None = None,
+                      field_size: str | None = None, evaluated_only: bool = True,
+                      odds_only: bool = False):
+    return _shadow_endpoint(query_shadow_models, "shadow_models", date_from, date_to,
+                            track, model, distance, surface, field_size,
+                            evaluated_only, odds_only)
+
+
+@app.get("/api/shadow-monitor/segments")
+def api_shadow_segments(date_from: str | None = None, date_to: str | None = None,
+                        track: str | None = None, model: str | None = None,
+                        distance: str | None = None, surface: str | None = None,
+                        field_size: str | None = None, evaluated_only: bool = True,
+                        odds_only: bool = False):
+    return _shadow_endpoint(query_shadow_segments, "shadow_segments", date_from, date_to,
+                            track, model, distance, surface, field_size,
+                            evaluated_only, odds_only)
+
+
+@app.get("/api/shadow-monitor/trends")
+def api_shadow_trends(date_from: str | None = None, date_to: str | None = None,
+                      track: str | None = None, model: str | None = None,
+                      distance: str | None = None, surface: str | None = None,
+                      field_size: str | None = None, evaluated_only: bool = True,
+                      odds_only: bool = False):
+    return _shadow_endpoint(query_shadow_trends, "shadow_trends", date_from, date_to,
+                            track, model, distance, surface, field_size,
+                            evaluated_only, odds_only)
+
+
+@app.get("/api/shadow-monitor/health")
+def api_shadow_health(date_from: str | None = None, date_to: str | None = None,
+                      track: str | None = None, model: str | None = None,
+                      distance: str | None = None, surface: str | None = None,
+                      field_size: str | None = None, evaluated_only: bool = True,
+                      odds_only: bool = False):
+    return _shadow_endpoint(query_shadow_health, "shadow_health", date_from, date_to,
+                            track, model, distance, surface, field_size,
+                            evaluated_only, odds_only)
+
+
+@app.get("/api/shadow-monitor/export.csv")
+def api_shadow_export(date_from: str | None = None, date_to: str | None = None,
+                      track: str | None = None, model: str | None = None,
+                      distance: str | None = None, surface: str | None = None,
+                      field_size: str | None = None, evaluated_only: bool = True,
+                      odds_only: bool = False):
+    filters = _shadow_args(
+        date_from, date_to, track, model, distance, surface, field_size,
+        evaluated_only, odds_only,
+    )
+    with readonly_connection() as connection:
+        content = query_shadow_export(connection, filters)
+    return PlainTextResponse(
+        "\ufeff" + content, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="shadow_monitor.csv"'},
+    )
+
+
 def self_check() -> dict[str, Any]:
     required_templates = ("base.html", "dashboard.html", "races.html", "predictions.html",
-                          "performance.html", "diagnostics.html", "diagnostics_race.html", "bet_simulator.html",
+                          "performance.html", "diagnostics.html", "diagnostics_race.html",
+                          "bet_simulator.html", "shadow_monitor.html",
                           "reports.html", "logs.html")
     with readonly_connection() as connection:
         db_ok = connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
