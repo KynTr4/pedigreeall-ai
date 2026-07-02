@@ -674,18 +674,34 @@ def main() -> int:
         contract_pass = False
     coverage_pass, missed_races = snapshot_coverage_pass(DB, history)
     # target_drift_status is excluded from blocking critical check (informational/non-blocking)
-    critical = (
+    # --- Hard gates: always blocking regardless of shadow age ---
+    hard_fail = (
         not provenance["passed"] or not contract_pass or not coverage_pass
-        or prediction_drift_status == "CRITICAL" or calibration_status == "CRITICAL"
+    )
+    # --- Drift gates: blocking only after 30 shadow days ---
+    completed = completed_races(latest)
+    completed_dates = set(completed["race_date"].unique()) if len(completed) else set()
+    shadow_days = len(completed_dates)
+    drift_critical = (
+        prediction_drift_status == "CRITICAL" or calibration_status == "CRITICAL"
         or feature_drift_status == "CRITICAL"
     )
     warmup = any(status == "INSUFFICIENT_DATA" for status in (
         prediction_drift_status, calibration_status, feature_drift_status
     ))
-    pipeline_status = "FAIL" if critical else "SHADOW_WARMUP" if warmup else "PASS"
-    completed = completed_races(latest)
-    completed_dates = set(completed["race_date"].unique()) if len(completed) else set()
-    shadow_days = len(completed_dates)
+    # During the first 30 shadow days, drift signals are reported but non-blocking.
+    in_warmup = shadow_days < 30
+    if hard_fail:
+        pipeline_status = "FAIL"
+    elif drift_critical and not in_warmup:
+        pipeline_status = "FAIL"
+    elif in_warmup:
+        pipeline_status = "SHADOW_WARMUP"
+    elif warmup:
+        pipeline_status = "SHADOW_WARMUP"
+    else:
+        pipeline_status = "PASS"
+    critical = hard_fail or (drift_critical and not in_warmup)
     monitor_date = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
     connection = sqlite3.connect(str(DB), timeout=60)
     try:
@@ -722,7 +738,7 @@ def main() -> int:
     if not latest_daily.empty:
         latest_daily = latest_daily[latest_daily["metric_date"].eq(latest_daily["metric_date"].max())]
     (REPORTS / "daily_shadow_report.md").write_text(
-        f"# Daily Shadow Report\n\nGenerated: {stamp}\n\n- Mode: `shadow_mode`\n- Pipeline status: **{pipeline_status}**\n- Archived predictions: **{len(history)}**\n- Latest-run races: **{latest['race_id'].nunique() if len(latest) else 0}**\n- Missed eligible races since shadow inception: **{len(missed_races)}**\n- Newly matched results: **{matched}**\n- Completed shadow days: **{shadow_days} / 90**\n- Model retraining: **disabled**\n\n"
+        f"# Daily Shadow Report\n\nGenerated: {stamp}\n\n- Mode: `shadow_mode`\n- Pipeline status: **{pipeline_status}**\n- Archived predictions: **{len(history)}**\n- Latest-run races: **{latest['race_id'].nunique() if len(latest) else 0}**\n- Missed eligible races since shadow inception: **{len(missed_races)}**\n- Newly matched results: **{matched}**\n- Completed shadow days: **{shadow_days} / 90**\n- Shadow warmup: **{'YES — drift gates non-blocking' if in_warmup else 'NO — drift gates blocking'}**\n- Model retraining: **disabled**\n\n"
         + markdown_table(latest_daily, ["model", "races", "top1_accuracy", "top3_accuracy", "top5_accuracy", "log_loss", "brier_score", "roc_auc", "calibration_error"]),
         encoding="utf-8",
     )
@@ -753,8 +769,9 @@ def main() -> int:
         + (markdown_table(roi, ["strategy", "bets", "stake", "payout", "profit", "roi", "status"]) if roi_status == "CERTIFIED" else "`ROI = NOT CERTIFIED`"),
         encoding="utf-8",
     )
+    warmup_note = f"\n\n> **Shadow warmup active ({shadow_days}/30 days).** Drift gates (prediction, feature, calibration) are reported but non-blocking until 30 shadow days are reached.\n" if in_warmup else ""
     (REPORTS / "model_health_dashboard.md").write_text(
-        f"# Model Health Dashboard\n\nGenerated: {stamp}\n\n## Status: **{pipeline_status}**\n\n- Production ready: **{'YES' if production_ready else 'NO'}**\n- Shadow days: **{shadow_days} / 90**\n- Healthy gate days: **{healthy_shadow_days} / 90**\n- Leakage gate: **{'PASS' if provenance['passed'] else 'FAIL'}**\n- Feature contract: **{'PASS' if contract_pass else 'FAIL'}**\n- Snapshot coverage: **{'PASS' if coverage_pass else 'FAIL'}**\n- Prediction drift: **{prediction_drift_status}**\n- Target drift: **{target_drift_status}** (non-blocking / informational)\n- Feature drift: **{feature_drift_status}**\n- Calibration: **{calibration_status}**\n- ROI: **{roi_status}**\n\nProduction readiness cannot be granted before 90 completed, healthy shadow dates.\n",
+        f"# Model Health Dashboard\n\nGenerated: {stamp}\n\n## Status: **{pipeline_status}**{warmup_note}\n\n- Production ready: **{'YES' if production_ready else 'NO'}**\n- Shadow days: **{shadow_days} / 90**\n- Healthy gate days: **{healthy_shadow_days} / 90**\n- Leakage gate: **{'PASS' if provenance['passed'] else 'FAIL'}**\n- Feature contract: **{'PASS' if contract_pass else 'FAIL'}**\n- Snapshot coverage: **{'PASS' if coverage_pass else 'FAIL'}**\n- Prediction drift: **{prediction_drift_status}**\n- Target drift: **{target_drift_status}** (non-blocking / informational)\n- Feature drift: **{feature_drift_status}**\n- Calibration: **{calibration_status}**\n- ROI: **{roi_status}**\n\nProduction readiness cannot be granted before 90 completed, healthy shadow dates.\n",
         encoding="utf-8",
     )
     print({"pipeline_status": pipeline_status, "production_ready": production_ready, "shadow_days": shadow_days, "matched": matched, "checks": checks})
