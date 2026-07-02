@@ -122,7 +122,9 @@ class DiagnosticsDashboardTests(unittest.TestCase):
         self.assertIn("Model Diagnostics", page)
         for model in ("Ensemble", "Logistic", "CatBoost", "XGBoost"):
             self.assertIn(f'value="{model}"', page)
-        self.assertIn('role="radiogroup"', page)
+        self.assertIn('<select id="diag-model" name="model" class="form-select">', page)
+        self.assertIn('<option value="">Tümü</option>', page)
+        self.assertNotIn('role="radiogroup"', page)
         shap = self.get("/api/diagnostics/feature-contribution").json()
         self.assertFalse(shap["available"])
         self.assertEqual(self.client.get("/api/diagnostics/summary?model=Unknown", headers=self.auth).status_code, 400)
