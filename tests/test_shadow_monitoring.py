@@ -10,7 +10,8 @@ from migrate_provenance_schema import apply_migrations
 from shadow_mode import archive_predictions
 from shadow_monitor import (
     calculate_live_metrics, feature_drift, latest_prediction_runs,
-    match_prediction_results, model_drift, roi_report_data,
+    load_history, match_prediction_results, model_drift, roi_report_data,
+    snapshot_coverage_pass,
 )
 
 
@@ -85,6 +86,64 @@ class ShadowMonitoringTests(unittest.TestCase):
     def test_post_start_prediction_is_rejected(self):
         with self.assertRaises(ValueError):
             archive_predictions(self.scored(), self.db, "2020-01-01T13:00:00+00:00")
+
+    def coverage_features(self, track="Istanbul"):
+        path = Path(self.tmp.name) / "features.parquet"
+        pd.DataFrame([{
+            "race_id": "r1",
+            "race_start_at": "2020-01-01T12:00:00+00:00",
+            "track": track,
+        }]).to_parquet(path, index=False)
+        with sqlite3.connect(self.db) as db:
+            db.execute(
+                """UPDATE monitoring_epochs SET started_at='2019-01-01T00:00:00Z'
+                   WHERE monitor_name='race_freeze_v2_fail_closed'"""
+            )
+        return path
+
+    def test_snapshot_coverage_requires_closed_domestic_race_prediction(self):
+        path = self.coverage_features()
+        passed, missed = snapshot_coverage_pass(
+            self.db,
+            pd.DataFrame(),
+            now=pd.Timestamp("2020-01-01T11:56:00Z"),
+            feature_path=path,
+        )
+        self.assertFalse(passed)
+        self.assertEqual(missed, ["r1"])
+
+    def test_snapshot_coverage_excludes_open_and_unsupported_races(self):
+        path = self.coverage_features()
+        open_passed, open_missed = snapshot_coverage_pass(
+            self.db,
+            pd.DataFrame(),
+            now=pd.Timestamp("2020-01-01T11:54:00Z"),
+            feature_path=path,
+        )
+        foreign_path = self.coverage_features("Ascot United Kingdom")
+        foreign_passed, foreign_missed = snapshot_coverage_pass(
+            self.db,
+            pd.DataFrame(),
+            now=pd.Timestamp("2020-01-01T13:00:00Z"),
+            feature_path=foreign_path,
+        )
+        self.assertTrue(open_passed)
+        self.assertEqual(open_missed, [])
+        self.assertTrue(foreign_passed)
+        self.assertEqual(foreign_missed, [])
+
+    def test_snapshot_coverage_accepts_archived_domestic_prediction(self):
+        path = self.coverage_features()
+        archive_predictions(self.scored(), self.db, "2020-01-01T10:00:00+00:00")
+        history, _ = load_history(self.db)
+        passed, missed = snapshot_coverage_pass(
+            self.db,
+            history,
+            now=pd.Timestamp("2020-01-01T11:56:00Z"),
+            feature_path=path,
+        )
+        self.assertTrue(passed)
+        self.assertEqual(missed, [])
 
     def test_result_matching_is_separate_and_append_only(self):
         archive = archive_predictions(self.scored(), self.db, "2020-01-01T10:00:00+00:00")

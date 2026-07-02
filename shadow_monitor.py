@@ -24,6 +24,7 @@ from feature_contract import (
     validate_model_feature_contract,
 )
 from migrate_provenance_schema import apply_migrations
+from race_scope import is_turkey_track
 from shadow_mode import export_prediction_history
 from validate_feature_provenance import validate as validate_provenance
 
@@ -467,7 +468,13 @@ def verify_feature_hashes(frame: pd.DataFrame) -> bool:
     return True
 
 
-def snapshot_coverage_pass(db_path: str | Path, history: pd.DataFrame) -> tuple[bool, list[str]]:
+def snapshot_coverage_pass(
+    db_path: str | Path,
+    history: pd.DataFrame,
+    *,
+    now: pd.Timestamp | None = None,
+    feature_path: str | Path | None = None,
+) -> tuple[bool, list[str]]:
     if history.empty:
         archive_integrity = True
     else:
@@ -481,23 +488,44 @@ def snapshot_coverage_pass(db_path: str | Path, history: pd.DataFrame) -> tuple[
                   OR s.source_request_id!=p.source_request_id
                   OR julianday(s.captured_at)>=julianday(p.race_start_at)"""
         ).fetchone()[0]
-        inception_row = connection.execute(
-            "SELECT applied_at FROM schema_migrations WHERE migration_name='007_prediction_snapshots.sql'"
+        epoch_row = connection.execute(
+            """SELECT started_at FROM monitoring_epochs
+               WHERE monitor_name='race_freeze_v2_fail_closed'"""
         ).fetchone()
     finally:
         connection.close()
     missed: list[str] = []
-    feature_path = ROOT / "output" / "asof_features.parquet"
-    if inception_row and feature_path.exists():
-        feature_rows = pd.read_parquet(feature_path, columns=["race_id", "race_start_at"])
+    path = Path(feature_path) if feature_path else ROOT / "output" / "asof_features.parquet"
+    if epoch_row and path.exists():
+        feature_rows = pd.read_parquet(
+            path, columns=["race_id", "race_start_at", "track"]
+        )
+        feature_rows = feature_rows.drop_duplicates("race_id")
         starts = pd.to_datetime(feature_rows["race_start_at"], utc=True, errors="coerce")
-        local_days = starts.dt.tz_convert(ZoneInfo("Europe/Istanbul")).dt.date
-        inception = pd.Timestamp(inception_row[0])
-        today = datetime.now(ZoneInfo("Europe/Istanbul")).date()
-        candidates = set(feature_rows.loc[starts.gt(inception) & local_days.le(today), "race_id"])
+        current = now if now is not None else pd.Timestamp.now(tz="UTC")
+        current = pd.Timestamp(current)
+        if current.tzinfo is None:
+            current = current.tz_localize("UTC")
+        else:
+            current = current.tz_convert("UTC")
+        epoch = pd.Timestamp(epoch_row[0])
+        domestic = feature_rows["track"].map(is_turkey_track)
+        final_window_closed = starts.sub(pd.Timedelta(minutes=5)).le(current)
+        candidates = set(feature_rows.loc[
+            starts.ge(epoch) & domestic & final_window_closed,
+            "race_id",
+        ])
         predicted = set(history["race_id"]) if not history.empty else set()
         missed = sorted(candidates - predicted)
-    return archive_integrity and bad == 0 and verify_feature_hashes(history) and not missed, missed
+    coverage_scope_ready = bool(epoch_row)
+    return (
+        coverage_scope_ready
+        and archive_integrity
+        and bad == 0
+        and verify_feature_hashes(history)
+        and not missed,
+        missed,
+    )
 
 
 def markdown_table(frame: pd.DataFrame, columns: list[str], limit: int = 100) -> str:
@@ -586,7 +614,7 @@ def main() -> int:
     completed = completed_races(latest)
     completed_dates = set(completed["race_date"].unique()) if len(completed) else set()
     shadow_days = len(completed_dates)
-    monitor_date = max(completed_dates) if completed_dates else datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
+    monitor_date = datetime.now(ZoneInfo("Europe/Istanbul")).date().isoformat()
     connection = sqlite3.connect(str(DB), timeout=60)
     try:
         healthy_dates = {

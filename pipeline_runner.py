@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -126,6 +127,7 @@ def run_step(script: str, args: list[str] | None = None, timeout: int = 3600) ->
     command = [sys.executable, str(PROJECT_ROOT / script), *(args or [])]
     started = datetime.now(timezone.utc)
     monotonic = time.monotonic()
+    exception_traceback = ""
     try:
         result = subprocess.run(
             command, cwd=PROJECT_ROOT, env=os.environ.copy(), text=True,
@@ -134,12 +136,21 @@ def run_step(script: str, args: list[str] | None = None, timeout: int = 3600) ->
         exit_code, stdout, stderr = result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as exc:
         exit_code = 124
-        stdout = exc.stdout or ""; stderr = (exc.stderr or "") + f"\nTimeout after {timeout}s"
+        stdout = exc.stdout or ""
+        stderr = (exc.stderr or "") + f"\nTimeout after {timeout}s"
+        exception_traceback = traceback.format_exc()
+    except Exception:
+        exit_code = 1
+        stdout = ""
+        stderr = traceback.format_exc()
+        exception_traceback = stderr
     ended = datetime.now(timezone.utc)
     return {
-        "script": script, "args": args or [], "started_at": started.isoformat(),
+        "script": script, "args": args or [], "command": command,
+        "started_at": started.isoformat(),
         "ended_at": ended.isoformat(), "duration_seconds": round(time.monotonic() - monotonic, 3),
         "exit_code": exit_code, "stdout": stdout, "stderr": stderr,
+        "exception_traceback": exception_traceback,
     }
 
 
