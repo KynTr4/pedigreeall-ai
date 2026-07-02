@@ -31,7 +31,7 @@ class WebDashboardTests(unittest.TestCase):
         token = base64.b64encode(f"{web_app.WEB_USERNAME}:{web_app.WEB_PASSWORD}".encode()).decode()
         self.auth = {"Authorization": f"Basic {token}"}
 
-    def seed_performance_race(self, index: int = 0):
+    def seed_performance_race(self, index: int = 0, include_prediction_odds: bool = True):
         race_id = f"performance-race-{index}"
         start = datetime(2030, 1, 1, 15, 30, tzinfo=timezone.utc) + timedelta(days=index)
         captured = start - timedelta(hours=2); predicted = start - timedelta(hours=1)
@@ -62,7 +62,8 @@ class WebDashboardTests(unittest.TestCase):
                     (f"prediction-{index}-{horse_no}", "model-v1", "pipeline-v1", race_id,
                      f"horse-{horse_no}", predicted.isoformat(), start.isoformat(), *values,
                      horse_no, f"hash-{index}-{horse_no}", snapshot_ids[horse_no - 1],
-                     f"program-{index}-{horse_no}", 3.40 if horse_no == 1 else 2.10),
+                     f"program-{index}-{horse_no}",
+                     (3.40 if horse_no == 1 else 2.10) if include_prediction_odds else None),
                 )
                 connection.execute(
                     """INSERT INTO race_results(
@@ -269,6 +270,43 @@ class WebDashboardTests(unittest.TestCase):
         export=self.client.get("/api/bet-simulator/export.csv?model=Ensemble&stake=20",headers=self.auth)
         self.assertEqual(export.status_code,200);self.assertIn("net_profit",export.text)
         self.assertEqual(self.client.get("/api/bet-simulator/summary?stake=0",headers=self.auth).status_code,400)
+
+    def test_bet_history_prefers_prediction_result_official_odds_with_result_fallback(self):
+        self.seed_performance_race(include_prediction_odds=False)
+        web_app._PERFORMANCE_CACHE.clear()
+
+        fallback = self.client.get(
+            "/api/bet-simulator/history?model=Ensemble&stake=20", headers=self.auth
+        ).json()["rows"][0]
+        self.assertAlmostEqual(fallback["decimal_odds"], 3.40)
+        self.assertAlmostEqual(fallback["models"]["Ensemble"]["official_odds"], 3.40)
+
+        with sqlite3.connect(self.db) as connection:
+            connection.executemany(
+                """INSERT INTO prediction_results(
+                       prediction_id,finish_position,winner,official_odds,
+                       official_time,payout,matched_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                [
+                    ("prediction-0-1", 1, 1, 4.80, "1.30.00", 4.80,
+                     "2030-01-01T17:00:00+00:00"),
+                    ("prediction-0-2", 2, 0, 2.10, "1.31.00", 0.0,
+                     "2030-01-01T17:00:00+00:00"),
+                ],
+            )
+        web_app._PERFORMANCE_CACHE.clear()
+
+        official = self.client.get(
+            "/api/bet-simulator/history?model=Ensemble&stake=20", headers=self.auth
+        ).json()["rows"][0]
+        self.assertAlmostEqual(official["decimal_odds"], 4.80)
+        self.assertAlmostEqual(official["models"]["Ensemble"]["official_odds"], 4.80)
+        self.assertAlmostEqual(official["models"]["Ensemble"]["return_amount"], 96.0)
+
+        summary = self.client.get(
+            "/api/bet-simulator/summary?model=Ensemble&stake=20", headers=self.auth
+        ).json()
+        self.assertAlmostEqual(summary["net_profit"], 76.0)
 
     def test_bet_model_comparison_rank_metrics_agf_and_model_scope(self):
         self.seed_rank_comparison_race(1, {

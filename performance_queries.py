@@ -83,7 +83,8 @@ race_programs AS (
 winners AS (
     SELECT r.race_id,
            GROUP_CONCAT(r.horse_id,'|') AS winner_ids,
-           GROUP_CONCAT(COALESCE(p.horse_name,r.horse_id),', ') AS winner_name
+           GROUP_CONCAT(COALESCE(p.horse_name,r.horse_id),', ') AS winner_name,
+           MAX(r.result_odds) AS winner_decimal_odds
     FROM latest_results r
     LEFT JOIN latest_programs p ON p.race_id=r.race_id AND p.horse_id=r.horse_id
     WHERE r.finish_position=1
@@ -102,9 +103,16 @@ evaluation_core AS (
            strftime('%H:%M',p.race_start_at,'+3 hours') AS race_time,
            CASE WHEN instr('|'||w.winner_ids||'|','|'||p.horse_id||'|')>0 THEN 1 ELSE 0 END AS correct,
            CASE WHEN instr('|'||w.winner_ids||'|','|'||p.horse_id||'|')>0
-                THEN p.odds ELSE NULL END AS decimal_odds
+                THEN COALESCE(pr.official_odds,predicted_result.result_odds,w.winner_decimal_odds)
+                ELSE NULL END AS decimal_odds,
+           w.winner_decimal_odds
     FROM ranked_predictions p
     JOIN winners w ON w.race_id=p.race_id
+    LEFT JOIN prediction_results pr ON pr.prediction_id=p.prediction_id
+    LEFT JOIN latest_results predicted_result
+      ON predicted_result.race_id=p.race_id
+     AND predicted_result.horse_id=p.horse_id
+     AND predicted_result.result_rank=1
     LEFT JOIN latest_programs pp ON pp.race_id=p.race_id AND pp.horse_id=p.horse_id
     LEFT JOIN race_programs rp ON rp.race_id=p.race_id
     WHERE p.prediction_rank=1

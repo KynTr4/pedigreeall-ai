@@ -58,7 +58,7 @@ def _trend_parts(filters: dict[str, Any]) -> tuple[str, list[Any]]:
 
 def _row_sql(where: str) -> str:
     return f"""SELECT race_date,city AS track,race_no,race_time,model,predicted_horse,
-               winner_name,correct,decimal_odds,race_start_at,prediction_time,race_id,
+               winner_name,correct,decimal_odds,winner_decimal_odds,race_start_at,prediction_time,race_id,
                probability,surface,race_class,distance,
                CASE WHEN correct=0 OR decimal_odds>0 THEN 1 ELSE 0 END AS bet_eligible
         FROM evaluated{where}"""
@@ -104,7 +104,7 @@ def history(connection: sqlite3.Connection, filters: dict[str, Any], page: int =
     rows = connection.execute(
         PERFORMANCE_CTE + f"""
         SELECT race_date, city AS track, race_no, race_time, model, predicted_horse,
-               winner_name, correct, decimal_odds, race_start_at, prediction_time, race_id,
+               winner_name, correct, decimal_odds, winner_decimal_odds, race_start_at, prediction_time, race_id,
                probability, surface, race_class, distance,
                CASE WHEN correct=0 OR decimal_odds>0 THEN 1 ELSE 0 END AS bet_eligible
         FROM evaluated
@@ -129,7 +129,7 @@ def history(connection: sqlite3.Connection, filters: dict[str, Any], page: int =
                 "race_no": row_dict["race_no"],
                 "race_time": row_dict["race_time"],
                 "winner_name": row_dict["winner_name"],
-                "decimal_odds": row_dict["decimal_odds"],
+                "decimal_odds": row_dict["winner_decimal_odds"],
                 "race_start_at": row_dict["race_start_at"],
                 "surface": row_dict["surface"],
                 "race_class": row_dict["race_class"],
@@ -146,9 +146,13 @@ def history(connection: sqlite3.Connection, filters: dict[str, Any], page: int =
             "odds_status": row_dict["odds_status"],
             "return_amount": row_dict["return_amount"],
             "stake": stake,
-            "model": m
+            "model": m,
+            "official_odds": row_dict["decimal_odds"],
         }
         pivoted[race_id]["models"][m] = m_data
+
+        if row_dict["correct"] and row_dict["decimal_odds"] is not None:
+            pivoted[race_id]["decimal_odds"] = row_dict["decimal_odds"]
         
         # Copy to root if it is the primary model for legacy compatibility
         if m == primary_model:
