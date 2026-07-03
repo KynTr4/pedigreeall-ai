@@ -1,8 +1,9 @@
 [Unit]
-Description=Check Race-Level Final Prediction Windows Every Five Minutes
+Description=Check Race-Level Final Prediction Windows Every Two Minutes
 
 [Timer]
-OnCalendar=*-*-* 09..23:00/5:00 Europe/Istanbul
+OnCalendar=*-*-* 09..23:00/2:00 Europe/Istanbul
+AccuracySec=1s
 Persistent=true
 Unit=at-yaris-race-freeze.service
 
