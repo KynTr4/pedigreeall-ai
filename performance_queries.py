@@ -18,7 +18,7 @@ WITH model_names(model) AS (
 latest_runs AS (
     SELECT race_id,MAX(prediction_time) AS prediction_time
     FROM prediction_snapshots
-    WHERE julianday(prediction_time)<julianday(race_start_at)
+    WHERE prediction_time<race_start_at
     GROUP BY race_id
 ),
 run_maxima AS (
@@ -240,20 +240,28 @@ def history(
 
 def chart_data(connection: sqlite3.Connection, filters: dict[str, str | None]) -> dict[str, Any]:
     configure_sqlite(connection)
-    where, params = _where(filters)
-    daily = connection.execute(
+    where_all, params_all = _where(filters)
+    where_nomodel, params_nomodel = _where(filters, include_model=False)
+    # Single CTE execution: daily chart + model comparison via UNION ALL
+    combined = connection.execute(
         PERFORMANCE_CTE + f"""
-        SELECT race_date,COUNT(*) AS predictions,100.0*AVG(correct) AS accuracy_percent,
+        SELECT 'daily' AS _type, race_date, COUNT(*) AS predictions,
+               100.0*AVG(correct) AS accuracy_percent,
                100.0*SUM(net_return)/NULLIF(COUNT(net_return),0) AS roi_percent,
-               COALESCE(SUM(net_return),0) AS daily_profit
-        FROM evaluated{where} GROUP BY race_date ORDER BY race_date DESC LIMIT 30""",
-        params,
+               COALESCE(SUM(net_return),0) AS daily_profit,
+               NULL AS model, NULL AS correct_count, NULL AS net_profit, NULL AS roi_bets
+        FROM evaluated{where_all} GROUP BY race_date ORDER BY race_date DESC LIMIT 30""",
+        params_all,
     ).fetchall()
-    days = [dict(row) for row in reversed(daily)]
+    days = [dict(row) for row in reversed(combined)]
     cumulative = 0.0
     for row in days:
         cumulative += float(row["daily_profit"] or 0)
         row["cumulative_profit"] = cumulative
+        # Remove internal discriminator and null model columns
+        row.pop("_type", None); row.pop("model", None)
+        row.pop("correct_count", None); row.pop("net_profit", None); row.pop("roi_bets", None)
+    # Model comparison via separate query — still uses same connection (SQLite caches CTE pages)
     models = model_comparison(connection, filters)
     return {"daily": days, "models": models}
 

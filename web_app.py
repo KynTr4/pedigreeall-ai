@@ -340,7 +340,7 @@ def _performance_cached(name: str, filters: dict[str, Any], loader, page: int | 
     now = time.monotonic()
     with _PERFORMANCE_CACHE_LOCK:
         cached = _PERFORMANCE_CACHE.get(key)
-        if cached and now - cached[0] <= 30:
+        if cached and now - cached[0] <= 300:
             return cached[1]
     with readonly_connection() as connection:
         value = loader(connection, filters) if page is None else loader(connection, filters, page)
