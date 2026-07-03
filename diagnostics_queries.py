@@ -1,10 +1,12 @@
 """Read-only SQL analytics for the Model Diagnostics dashboard."""
+
 from __future__ import annotations
 
-import sqlite3
 import json
+import sqlite3
 from datetime import datetime
 from typing import Any, Iterator
+
 from race_scope import configure_sqlite
 
 MODELS = ("Logistic", "CatBoost", "XGBoost", "Ensemble")
@@ -15,7 +17,7 @@ WITH settings(model,race_id) AS (VALUES (?,?)),
 latest_run AS (
     SELECT p.race_id,MAX(p.prediction_time) AS prediction_time
     FROM prediction_snapshots p,settings s
-    WHERE p.race_id=s.race_id AND julianday(p.prediction_time)<julianday(p.race_start_at)
+    WHERE p.race_id=s.race_id AND p.prediction_time<p.race_start_at
 ),
 scored AS (
     SELECT p.*,s.model,
@@ -44,7 +46,7 @@ WITH settings(model) AS (VALUES (?)),
 latest_prediction_runs AS (
     SELECT race_id,MAX(prediction_time) AS prediction_time
     FROM prediction_snapshots
-    WHERE julianday(prediction_time)<julianday(race_start_at)
+    WHERE prediction_time<race_start_at
     GROUP BY race_id
 ),
 scored AS (
@@ -70,7 +72,7 @@ program_ranked AS (
         PARTITION BY race_id,horse_id ORDER BY captured_at DESC,snapshot_id DESC
     ) AS rn
     FROM program_snapshots p
-    WHERE julianday(captured_at)<julianday(race_start_at)
+    WHERE captured_at<race_start_at
 ),
 programs AS (SELECT * FROM program_ranked WHERE rn=1),
 race_meta AS (
@@ -157,10 +159,15 @@ diagnostics AS (
 """
 
 
-def normalize_filters(date: str | None = None, track: str | None = None,
-                      model: str | None = None, race_type: str | None = None,
-                      distance: str | None = None, surface: str | None = None,
-                      field_size: str | None = None) -> dict[str, str | None]:
+def normalize_filters(
+    date: str | None = None,
+    track: str | None = None,
+    model: str | None = None,
+    race_type: str | None = None,
+    distance: str | None = None,
+    surface: str | None = None,
+    field_size: str | None = None,
+) -> dict[str, str | None]:
     if date:
         try:
             datetime.strptime(date, "%Y-%m-%d")
@@ -169,32 +176,51 @@ def normalize_filters(date: str | None = None, track: str | None = None,
     model = model or "Ensemble"
     if model not in MODELS:
         raise ValueError(f"model must be one of: {', '.join(MODELS)}")
-    return {"date": date or None, "track": track or None, "model": model,
-            "race_type": race_type or None, "distance": distance or None,
-            "surface": surface or None, "field_size": field_size or None}
+    return {
+        "date": date or None,
+        "track": track or None,
+        "model": model,
+        "race_type": race_type or None,
+        "distance": distance or None,
+        "surface": surface or None,
+        "field_size": field_size or None,
+    }
 
 
 def _where(filters: dict[str, str | None]) -> tuple[str, list[Any]]:
-    columns = {"date": "race_date", "track": "track", "race_type": "race_type_group",
-               "distance": "distance_group", "surface": "surface_group",
-               "field_size": "field_size_group"}
+    columns = {
+        "date": "race_date",
+        "track": "track",
+        "race_type": "race_type_group",
+        "distance": "distance_group",
+        "surface": "surface_group",
+        "field_size": "field_size_group",
+    }
     clauses, params = [], []
     for key, column in columns.items():
         if filters.get(key):
-            clauses.append(f"track_key({column})=track_key(?)" if key == "track" else f"{column}=?")
+            clauses.append(
+                f"track_key({column})=track_key(?)" if key == "track" else f"{column}=?"
+            )
             params.append(filters[key])
     return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
-def _params(filters: dict[str, str | None], extra: list[Any] | None = None) -> list[Any]:
+def _params(
+    filters: dict[str, str | None], extra: list[Any] | None = None
+) -> list[Any]:
     _, where_params = _where(filters)
     return [filters["model"], *where_params, *(extra or [])]
 
 
-def summary(connection: sqlite3.Connection, filters: dict[str, str | None]) -> dict[str, Any]:
+def summary(
+    connection: sqlite3.Connection, filters: dict[str, str | None]
+) -> dict[str, Any]:
     configure_sqlite(connection)
     where, _ = _where(filters)
-    row = connection.execute(DIAGNOSTICS_CTE + f"""
+    row = connection.execute(
+        DIAGNOSTICS_CTE
+        + f"""
         SELECT COUNT(*) AS race_count,COALESCE(100.0*AVG(correct),0) AS top1_accuracy,
                COALESCE(100.0*AVG(top2_correct),0) AS top2_accuracy,
                COALESCE(100.0*AVG(top3_correct),0) AS top3_accuracy,
@@ -203,42 +229,76 @@ def summary(connection: sqlite3.Connection, filters: dict[str, str | None]) -> d
                COALESCE(SUM(agf_comparison='Model > AGF'),0) AS model_over_agf,
                COALESCE(SUM(agf_comparison='AGF > Model'),0) AS agf_over_model,
                COALESCE(SUM(agf_comparison='Beraber'),0) AS tied
-        FROM diagnostics{where}""", _params(filters)).fetchone()
+        FROM diagnostics{where}""",
+        _params(filters),
+    ).fetchone()
     return dict(row)
 
 
-def races(connection: sqlite3.Connection, filters: dict[str, str | None], page: int = 1) -> dict[str, Any]:
+def races(
+    connection: sqlite3.Connection, filters: dict[str, str | None], page: int = 1
+) -> dict[str, Any]:
     configure_sqlite(connection)
-    page = max(1, int(page)); where, _ = _where(filters)
-    rows = connection.execute(DIAGNOSTICS_CTE + f"""
+    page = max(1, int(page))
+    where, _ = _where(filters)
+    rows = connection.execute(
+        DIAGNOSTICS_CTE
+        + f"""
         SELECT *,COUNT(*) OVER() AS total_count FROM diagnostics{where}
         ORDER BY race_start_at DESC,race_no DESC LIMIT ? OFFSET ?""",
-        _params(filters, [PAGE_SIZE, (page - 1) * PAGE_SIZE])).fetchall()
+        _params(filters, [PAGE_SIZE, (page - 1) * PAGE_SIZE]),
+    ).fetchall()
     total = int(rows[0]["total_count"]) if rows else 0
     if not rows and page > 1:
-        total = int(connection.execute(DIAGNOSTICS_CTE + f"SELECT COUNT(*) FROM diagnostics{where}",
-                                       _params(filters)).fetchone()[0])
+        total = int(
+            connection.execute(
+                DIAGNOSTICS_CTE + f"SELECT COUNT(*) FROM diagnostics{where}",
+                _params(filters),
+            ).fetchone()[0]
+        )
     items = []
     for row in rows:
-        item = dict(row); item.pop("total_count", None); items.append(item)
-    return {"page": page, "page_size": PAGE_SIZE, "total": total,
-            "pages": max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE), "rows": items}
+        item = dict(row)
+        item.pop("total_count", None)
+        items.append(item)
+    return {
+        "page": page,
+        "page_size": PAGE_SIZE,
+        "total": total,
+        "pages": max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE),
+        "rows": items,
+    }
 
 
-def winner_ranks(connection: sqlite3.Connection, filters: dict[str, str | None]) -> list[dict[str, Any]]:
+def winner_ranks(
+    connection: sqlite3.Connection, filters: dict[str, str | None]
+) -> list[dict[str, Any]]:
     configure_sqlite(connection)
     where, _ = _where(filters)
-    return [dict(row) for row in connection.execute(DIAGNOSTICS_CTE + f"""
+    return [
+        dict(row)
+        for row in connection.execute(
+            DIAGNOSTICS_CTE
+            + f"""
         SELECT winner_rank,COUNT(*) AS race_count FROM diagnostics{where}
-        GROUP BY winner_rank ORDER BY winner_rank""", _params(filters)).fetchall()]
+        GROUP BY winner_rank ORDER BY winner_rank""",
+            _params(filters),
+        ).fetchall()
+    ]
 
 
-def group_performance(connection: sqlite3.Connection, filters: dict[str, str | None]) -> list[dict[str, Any]]:
+def group_performance(
+    connection: sqlite3.Connection, filters: dict[str, str | None]
+) -> list[dict[str, Any]]:
     configure_sqlite(connection)
     where, _ = _where(filters)
-    dimensions = (("Pist Türü", "surface_group"), ("Irk", "breed_group"),
-                  ("Yarış Tipi", "race_type_group"), ("Mesafe", "distance_group"),
-                  ("At Sayısı", "field_size_group"))
+    dimensions = (
+        ("Pist Türü", "surface_group"),
+        ("Irk", "breed_group"),
+        ("Yarış Tipi", "race_type_group"),
+        ("Mesafe", "distance_group"),
+        ("At Sayısı", "field_size_group"),
+    )
     selects = []
     for label, column in dimensions:
         selects.append(f"""SELECT '{label}' AS dimension,{column} AS group_name,
@@ -246,49 +306,89 @@ def group_performance(connection: sqlite3.Connection, filters: dict[str, str | N
             100.0*AVG(top3_correct) AS top3_accuracy,
             100.0*SUM(net_return)/NULLIF(COUNT(net_return),0) AS roi,
             COALESCE(SUM(net_return),0) AS net_profit FROM filtered GROUP BY {column}""")
-    sql = DIAGNOSTICS_CTE + f", filtered AS (SELECT * FROM diagnostics{where})\n" + " UNION ALL ".join(selects)
+    sql = (
+        DIAGNOSTICS_CTE
+        + f", filtered AS (SELECT * FROM diagnostics{where})\n"
+        + " UNION ALL ".join(selects)
+    )
     return [dict(row) for row in connection.execute(sql, _params(filters)).fetchall()]
 
 
-def extremes(connection: sqlite3.Connection, filters: dict[str, str | None]) -> dict[str, Any]:
+def extremes(
+    connection: sqlite3.Connection, filters: dict[str, str | None]
+) -> dict[str, Any]:
     configure_sqlite(connection)
     where, _ = _where(filters)
     base = DIAGNOSTICS_CTE + f", filtered AS (SELECT * FROM diagnostics{where}) "
     columns = "race_id,race_date,track,race_no,top1_horse,top1_probability,winner_horse,winner_probability,probability_difference"
-    errors = connection.execute(base + f"SELECT {columns} FROM filtered WHERE correct=0 ORDER BY top1_probability DESC LIMIT 50", _params(filters)).fetchall()
-    successes = connection.execute(base + f"SELECT {columns} FROM filtered WHERE correct=1 ORDER BY top1_probability ASC LIMIT 50", _params(filters)).fetchall()
-    return {"errors": [dict(row) for row in errors], "successes": [dict(row) for row in successes]}
+    errors = connection.execute(
+        base
+        + f"SELECT {columns} FROM filtered WHERE correct=0 ORDER BY top1_probability DESC LIMIT 50",
+        _params(filters),
+    ).fetchall()
+    successes = connection.execute(
+        base
+        + f"SELECT {columns} FROM filtered WHERE correct=1 ORDER BY top1_probability ASC LIMIT 50",
+        _params(filters),
+    ).fetchall()
+    return {
+        "errors": [dict(row) for row in errors],
+        "successes": [dict(row) for row in successes],
+    }
 
 
-def filter_options(connection: sqlite3.Connection, model: str = "Ensemble") -> dict[str, Any]:
+def filter_options(
+    connection: sqlite3.Connection, model: str = "Ensemble"
+) -> dict[str, Any]:
     configure_sqlite(connection)
     filters = normalize_filters(model=model)
-    row = connection.execute(DIAGNOSTICS_CTE + """
+    row = connection.execute(
+        DIAGNOSTICS_CTE
+        + """
         SELECT GROUP_CONCAT(DISTINCT track) AS tracks,GROUP_CONCAT(DISTINCT race_type_group) AS race_types,
                GROUP_CONCAT(DISTINCT distance_group) AS distances,GROUP_CONCAT(DISTINCT surface_group) AS surfaces,
-               GROUP_CONCAT(DISTINCT field_size_group) AS field_sizes FROM diagnostics""", [filters["model"]]).fetchone()
+               GROUP_CONCAT(DISTINCT field_size_group) AS field_sizes FROM diagnostics""",
+        [filters["model"]],
+    ).fetchone()
     split = lambda value: sorted(x for x in (value or "").split(",") if x)
-    return {"models": list(MODELS), "tracks": split(row["tracks"]),
-            "race_types": split(row["race_types"]), "distances": split(row["distances"]),
-            "surfaces": split(row["surfaces"]), "field_sizes": split(row["field_sizes"])}
+    return {
+        "models": list(MODELS),
+        "tracks": split(row["tracks"]),
+        "race_types": split(row["race_types"]),
+        "distances": split(row["distances"]),
+        "surfaces": split(row["surfaces"]),
+        "field_sizes": split(row["field_sizes"]),
+    }
 
 
-def export_rows(connection: sqlite3.Connection, filters: dict[str, str | None]) -> Iterator[dict[str, Any]]:
+def export_rows(
+    connection: sqlite3.Connection, filters: dict[str, str | None]
+) -> Iterator[dict[str, Any]]:
     configure_sqlite(connection)
     where, _ = _where(filters)
-    cursor = connection.execute(DIAGNOSTICS_CTE + f"SELECT * FROM diagnostics{where} ORDER BY race_start_at DESC", _params(filters))
+    cursor = connection.execute(
+        DIAGNOSTICS_CTE
+        + f"SELECT * FROM diagnostics{where} ORDER BY race_start_at DESC",
+        _params(filters),
+    )
     for row in cursor:
         yield dict(row)
 
 
 def feature_contribution_status() -> dict[str, Any]:
-    return {"available": False, "reason": "Arşivde SHAP katkı değerleri yok; read-only diagnostics modeli yeniden çalıştırmaz."}
+    return {
+        "available": False,
+        "reason": "Arşivde SHAP katkı değerleri yok; read-only diagnostics modeli yeniden çalıştırmaz.",
+    }
 
 
 def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
-    return connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    return (
+        connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _decode_features(value: Any) -> dict[str, Any]:
@@ -299,7 +399,9 @@ def _decode_features(value: Any) -> dict[str, Any]:
         return {}
 
 
-def _confidence(top_probability: float, second_probability: float, correct: bool) -> dict[str, Any]:
+def _confidence(
+    top_probability: float, second_probability: float, correct: bool
+) -> dict[str, Any]:
     margin = max(0.0, top_probability - second_probability)
     if top_probability >= 0.25 or margin >= 0.10:
         level = "High"
@@ -307,22 +409,45 @@ def _confidence(top_probability: float, second_probability: float, correct: bool
         level = "Low"
     else:
         level = "Medium"
-    label = "Medium Confidence" if level == "Medium" else f"{level} Confidence {'Correct' if correct else 'Wrong'}"
-    return {"level": level, "label": label, "top_probability": top_probability,
-            "top2_margin": margin, "rules_version": "probability-margin-v1"}
+    label = (
+        "Medium Confidence"
+        if level == "Medium"
+        else f"{level} Confidence {'Correct' if correct else 'Wrong'}"
+    )
+    return {
+        "level": level,
+        "label": label,
+        "top_probability": top_probability,
+        "top2_margin": margin,
+        "rules_version": "probability-margin-v1",
+    }
 
 
 def _horse_card(row: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]:
     def first(*names):
-        return next((features[name] for name in names if name in features and features[name] is not None), None)
+        return next(
+            (
+                features[name]
+                for name in names
+                if name in features and features[name] is not None
+            ),
+            None,
+        )
+
     return {
-        "horse_name": row.get("horse_name"), "horse_id": row.get("horse_id"),
-        "model_rank": row.get("model_rank"), "probability": row.get("probability"),
-        "agf": row.get("agf_percent"), "agf_rank": row.get("agf_rank"),
-        "odds_at_prediction": row.get("odds"), "jockey": row.get("jockey"),
-        "trainer": row.get("trainer"), "carried_weight": row.get("carried_weight"),
+        "horse_name": row.get("horse_name"),
+        "horse_id": row.get("horse_id"),
+        "model_rank": row.get("model_rank"),
+        "probability": row.get("probability"),
+        "agf": row.get("agf_percent"),
+        "agf_rank": row.get("agf_rank"),
+        "odds_at_prediction": row.get("odds"),
+        "jockey": row.get("jockey"),
+        "trainer": row.get("trainer"),
+        "carried_weight": row.get("carried_weight"),
         "pre_race_handicap_rating": first("pre_race_handicap_rating"),
-        "age": first("age"), "sex": first("sex", "gender"),
+        "age": first("age"),
+        "sex": first("sex", "gender"),
         "pedigree": first("pedigree", "pedigree_score"),
         "last_race_date": first("last_race_date"),
         "last_3_races": first("last_3_races", "last_3_avg_position"),
@@ -335,11 +460,15 @@ def _horse_card(row: dict[str, Any], features: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ensemble") -> dict[str, Any] | None:
+def race_detail(
+    connection: sqlite3.Connection, race_id: str, model: str = "Ensemble"
+) -> dict[str, Any] | None:
     configure_sqlite(connection)
     if model not in MODELS:
         raise ValueError(f"model must be one of: {', '.join(MODELS)}")
-    rows = connection.execute(DETAIL_CTE + """
+    rows = connection.execute(
+        DETAIL_CTE
+        + """
         SELECT p.prediction_id,p.race_id,p.horse_id,p.prediction_time,p.race_start_at,
                p.model,p.model_version,p.model_rank,p.probability,p.feature_hash,
                p.feature_values_json,p.feature_contract_version,p.feature_snapshot_id,
@@ -350,7 +479,9 @@ def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ense
         FROM ranked p
         LEFT JOIN program_snapshots fs ON fs.snapshot_id=p.feature_snapshot_id
         LEFT JOIN results r ON r.race_id=p.race_id AND r.horse_id=p.horse_id
-        ORDER BY p.model_rank""", (model, race_id)).fetchall()
+        ORDER BY p.model_rank""",
+        (model, race_id),
+    ).fetchall()
     if not rows:
         return None
     ranking = [dict(row) for row in rows]
@@ -358,18 +489,30 @@ def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ense
     if _table_exists(connection, "prediction_feature_snapshots"):
         ids = [row["prediction_id"] for row in ranking]
         placeholders = ",".join("?" for _ in ids)
-        archive_rows = {row["prediction_id"]: row for row in connection.execute(
-            f"SELECT * FROM prediction_feature_snapshots WHERE prediction_id IN ({placeholders})", ids
-        )}
+        archive_rows = {
+            row["prediction_id"]: row
+            for row in connection.execute(
+                f"SELECT * FROM prediction_feature_snapshots WHERE prediction_id IN ({placeholders})",
+                ids,
+            )
+        }
     for row in ranking:
         archived = archive_rows.get(row["prediction_id"])
-        raw = archived["feature_values_json"] if archived else row["feature_values_json"]
+        raw = (
+            archived["feature_values_json"] if archived else row["feature_values_json"]
+        )
         row["features"] = _decode_features(raw)
         row["feature_snapshot_available"] = bool(row["features"])
-        row["feature_snapshot_source"] = "prediction_feature_snapshots" if archived else (
-            "prediction_snapshots.feature_values_json" if row["features"] else None
+        row["feature_snapshot_source"] = (
+            "prediction_feature_snapshots"
+            if archived
+            else (
+                "prediction_snapshots.feature_values_json" if row["features"] else None
+            )
         )
-        row["feature_hash_verified"] = bool(archived and archived["feature_hash"] == row["feature_hash"])
+        row["feature_hash_verified"] = bool(
+            archived and archived["feature_hash"] == row["feature_hash"]
+        )
         row["winner"] = row.get("finish_position") == 1
 
     selected = ranking[0]
@@ -377,19 +520,35 @@ def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ense
     if winner is None:
         return None
     selected_features, winner_features = selected["features"], winner["features"]
-    feature_names = list(dict.fromkeys([*selected_features.keys(), *winner_features.keys()]))
+    feature_names = list(
+        dict.fromkeys([*selected_features.keys(), *winner_features.keys()])
+    )
     comparison = []
     for name in feature_names:
         left, right = selected_features.get(name), winner_features.get(name)
         difference = None
-        if isinstance(left, (int, float)) and not isinstance(left, bool) and isinstance(right, (int, float)) and not isinstance(right, bool):
+        if (
+            isinstance(left, (int, float))
+            and not isinstance(left, bool)
+            and isinstance(right, (int, float))
+            and not isinstance(right, bool)
+        ):
             difference = float(left) - float(right)
-        comparison.append({"feature": name, "model_selection": left, "winner": right,
-                           "difference": difference, "equal": left == right})
+        comparison.append(
+            {
+                "feature": name,
+                "model_selection": left,
+                "winner": right,
+                "difference": difference,
+                "equal": left == right,
+            }
+        )
 
     correct = selected["horse_id"] == winner["horse_id"]
     second_probability = float(ranking[1]["probability"]) if len(ranking) > 1 else 0.0
-    confidence = _confidence(float(selected["probability"]), second_probability, correct)
+    confidence = _confidence(
+        float(selected["probability"]), second_probability, correct
+    )
     gap = float(selected["probability"]) - float(winner["probability"])
     if correct:
         message = "Modelin ilk tercihi yarışı kazandı."
@@ -400,20 +559,42 @@ def race_detail(connection: sqlite3.Connection, race_id: str, model: str = "Ense
     else:
         message = "Kazanan, arşivlenmiş olasılıklara göre gerçekçi bir ilk sıra adayı olarak değerlendirilmedi."
     first = ranking[0]
-    metadata = {key: first.get(key) for key in (
-        "race_id", "race_start_at", "race_no", "track", "surface", "distance",
-        "race_class", "prediction_time", "model", "model_version", "feature_contract_version"
-    )}
+    metadata = {
+        key: first.get(key)
+        for key in (
+            "race_id",
+            "race_start_at",
+            "race_no",
+            "track",
+            "surface",
+            "distance",
+            "race_class",
+            "prediction_time",
+            "model",
+            "model_version",
+            "feature_contract_version",
+        )
+    }
     return {
-        "race": metadata, "model_selection": _horse_card(selected, selected_features),
-        "winner": _horse_card(winner, winner_features), "feature_comparison": comparison,
-        "ranking": ranking, "top10": ranking[:10], "correct": correct,
-        "winner_rank": winner["model_rank"], "probability_difference": gap,
+        "race": metadata,
+        "model_selection": _horse_card(selected, selected_features),
+        "winner": _horse_card(winner, winner_features),
+        "feature_comparison": comparison,
+        "ranking": ranking,
+        "top10": ranking[:10],
+        "correct": correct,
+        "winner_rank": winner["model_rank"],
+        "probability_difference": gap,
         "confidence": confidence,
-        "why_missed": {"winner_rank": winner["model_rank"], "probability_difference": gap,
-                       "confidence": confidence["label"], "message": message},
+        "why_missed": {
+            "winner_rank": winner["model_rank"],
+            "probability_difference": gap,
+            "confidence": confidence["label"],
+            "message": message,
+        },
         "feature_snapshot_available": bool(selected_features and winner_features),
-        "feature_snapshot_message": None if selected_features and winner_features else
-            "Prediction feature snapshot was not archived. Historical feature comparison is unavailable.",
+        "feature_snapshot_message": None
+        if selected_features and winner_features
+        else "Prediction feature snapshot was not archived. Historical feature comparison is unavailable.",
         "shap": feature_contribution_status(),
     }
