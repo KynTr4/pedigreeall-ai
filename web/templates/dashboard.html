@@ -16,10 +16,26 @@
                 <div class="status-card-icon" style="color: var(--accent);">✔</div>
             </div>
             <div>
-                <div class="status-card-value" style="color: {{ 'var(--accent)' if data.system_status == 'healthy' else 'var(--warn)' }};">
-                    {{ 'SAĞLIKLI' if data.system_status == 'healthy' else 'DİKKAT' }}
+                <div class="status-card-value d-flex align-items-center justify-content-between" style="color: {{ 'var(--accent)' if data.system_status == 'healthy' else 'var(--warn)' }};">
+                    <span>{{ 'SAĞLIKLI' if data.system_status == 'healthy' else 'DİKKAT' }}</span>
+                    {% if data.system_status != 'healthy' and data.attention_reasons %}
+                    <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem; font-weight: 600;" title="{{ data.attention_reasons | join('&#10;') }}">⚠ {{ data.attention_reasons|length }} Uyarı</span>
+                    {% endif %}
                 </div>
-                <div class="status-card-sub">{{ 'Tüm servisler çalışıyor' if data.system_status == 'healthy' else 'İncelenmesi gereken hatalar var' }}</div>
+                <div class="status-card-sub">
+                    {% if data.system_status == 'healthy' %}
+                        Tüm servisler çalışıyor
+                    {% elif data.attention_reasons %}
+                        <div style="color: var(--warn); font-weight: 500;">• {{ data.attention_reasons[0] }}</div>
+                        {% if data.attention_reasons|length > 1 %}
+                        <div class="text-muted mt-1" style="font-size: 0.68rem;" title="{{ data.attention_reasons | join(', ') }}">
+                            +{{ data.attention_reasons|length - 1 }} diğer hata mevcut (üzerine gelin)
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        İncelenmesi gereken hatalar var
+                    {% endif %}
+                </div>
             </div>
         </div>
     </div>
@@ -76,8 +92,8 @@
                 <div class="status-card-icon" style="color: var(--accent);">📈</div>
             </div>
             <div>
-                <div class="status-card-value">{{ data.last_prediction_at.split('T')[1][:5] if data.last_prediction_at and 'T' in data.last_prediction_at else (data.last_prediction_at[:5] if data.last_prediction_at else '16:45') }}</div>
-                <div class="status-card-sub">{{ data.last_prediction_at.split('T')[0] if data.last_prediction_at and 'T' in data.last_prediction_at else '04.07.2026' }}</div>
+                <div class="status-card-value">{{ data.last_prediction_at.replace('T', ' ').split(' ')[1][:5] if data.last_prediction_at and ('T' in data.last_prediction_at or ' ' in data.last_prediction_at) else (data.last_prediction_at or '16:45') }}</div>
+                <div class="status-card-sub">{{ data.last_prediction_at.replace('T', ' ').split(' ')[0] if data.last_prediction_at and ('T' in data.last_prediction_at or ' ' in data.last_prediction_at) else '04.07.2026' }}</div>
             </div>
         </div>
     </div>
@@ -90,8 +106,8 @@
                 <div class="status-card-icon" style="color: var(--accent);">✓</div>
             </div>
             <div>
-                <div class="status-card-value">{{ data.last_results_at.split('T')[1][:5] if data.last_results_at and 'T' in data.last_results_at else (data.last_results_at[:5] if data.last_results_at else '16:40') }}</div>
-                <div class="status-card-sub">{{ data.last_results_at.split('T')[0] if data.last_results_at and 'T' in data.last_results_at else '04.07.2026' }}</div>
+                <div class="status-card-value">{{ data.last_results_at.replace('T', ' ').split(' ')[1][:5] if data.last_results_at and ('T' in data.last_results_at or ' ' in data.last_results_at) else (data.last_results_at or '16:40') }}</div>
+                <div class="status-card-sub">{{ data.last_results_at.replace('T', ' ').split(' ')[0] if data.last_results_at and ('T' in data.last_results_at or ' ' in data.last_results_at) else '04.07.2026' }}</div>
             </div>
         </div>
     </div>
@@ -137,7 +153,7 @@
                             <td>13:30</td>
                             <td class="fw-semibold">İstanbul</td>
                             <td>1. Koşu</td>
-                            <td class="text-muted">ŞARTLI 4 / Dişi</td>
+                            <td class="fw-medium" style="color: #cbd5e1;">ŞARTLI 4 / Dişi</td>
                             <td>8 At</td>
                             <td><span class="badge-pill badge-success">Koşulacak</span></td>
                         </tr>
@@ -145,7 +161,7 @@
                             <td>14:00</td>
                             <td class="fw-semibold">İstanbul</td>
                             <td>2. Koşu</td>
-                            <td class="text-muted">HANDİKAP 15</td>
+                            <td class="fw-medium" style="color: #cbd5e1;">HANDİKAP 15</td>
                             <td>11 At</td>
                             <td><span class="badge-pill badge-success">Koşulacak</span></td>
                         </tr>
@@ -153,7 +169,7 @@
                             <td>14:30</td>
                             <td class="fw-semibold">İstanbul</td>
                             <td>3. Koşu</td>
-                            <td class="text-muted">KV-7</td>
+                            <td class="fw-medium" style="color: #cbd5e1;">KV-7</td>
                             <td>6 At</td>
                             <td><span class="badge-pill badge-success">Koşulacak</span></td>
                         </tr>
@@ -161,7 +177,7 @@
                             <td>15:00</td>
                             <td class="fw-semibold">İzmir</td>
                             <td>1. Koşu</td>
-                            <td class="text-muted">MAİDEN</td>
+                            <td class="fw-medium" style="color: #cbd5e1;">MAİDEN</td>
                             <td>12 At</td>
                             <td><span class="badge-pill badge-muted">Tamamlandı</span></td>
                         </tr>
@@ -169,7 +185,7 @@
                             <td>15:30</td>
                             <td class="fw-semibold">İzmir</td>
                             <td>2. Koşu</td>
-                            <td class="text-muted">ŞARTLI 5</td>
+                            <td class="fw-medium" style="color: #cbd5e1;">ŞARTLI 5</td>
                             <td>9 At</td>
                             <td><span class="badge-pill badge-muted">Tamamlandı</span></td>
                         </tr>
@@ -449,7 +465,31 @@
         </div>
         <a href="/api/storage-status" target="_blank" class="btn btn-outline-secondary btn-sm" style="border-color: var(--border); font-size: 0.75rem;">JSON Formatı</a>
     </div>
-    <div id="diskContent" class="text-muted small">Yükleniyor...</div>
+    <div id="diskContent" class="small">
+        {% if data.storage and data.storage.disk %}
+            {% set disk = data.storage.disk %}
+            {% set pct = disk.used_percent %}
+            {% set barColor = 'danger' if pct >= 85 else ('warning' if pct >= 70 else 'success') %}
+            <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+                <span>Toplam <b class="text-light">{{ disk.total_gb }} GB</b></span>
+                <span>Kullanılan <b class="text-{{ barColor }}">{{ disk.used_gb }} GB (%{{ pct }})</b>{% if data.storage.alert %}<span class="badge bg-danger ms-2">⚠ UYARI</span>{% endif %}</span>
+                <span>Boş <b class="text-light">{{ disk.free_gb }} GB</b></span>
+                <span class="text-muted">Son temizlik: {{ data.storage.last_run_at | default('—') }}</span>
+            </div>
+            <div class="progress mb-3" style="height:6px; background: rgba(255,255,255,0.05);">
+                <div class="progress-bar bg-{{ barColor }}" style="width: {{ pct }}%"></div>
+            </div>
+            <div class="small text-muted d-flex flex-wrap gap-3">
+                {% if data.storage.dirs %}
+                    {% for k, v in data.storage.dirs.items() %}
+                        <span><b class="text-light">{{ k }}</b> {{ (v.size_mb / 1024)|round(1) ~ 'GB' if v.size_mb >= 1024 else v.size_mb ~ 'MB' }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="text-muted">Yükleniyor...</div>
+        {% endif %}
+    </div>
 </div>
 
 <!-- FOOTER -->
@@ -459,6 +499,18 @@
 </footer>
 
 <script>
+function extractTime(dtStr) {
+    if (!dtStr) return "—";
+    if (dtStr.includes(" ")) return dtStr.split(" ")[1].substring(0, 5);
+    if (dtStr.includes("T")) return dtStr.split("T")[1].substring(0, 5);
+    return dtStr.substring(0, 5);
+}
+function formatDT(dtStr) {
+    if (!dtStr) return "—";
+    if (dtStr.includes(".") && dtStr.includes(" ")) return dtStr;
+    return dtStr.replace("T", " ").substring(0, 16);
+}
+
 async function initDashboard() {
     // 1. Storage Status
     try {
@@ -475,7 +527,7 @@ async function initDashboard() {
                 .map(([k, v]) => `<span class="me-3"><b>${k}</b> ${v.size_mb >= 1024 ? (v.size_mb / 1024).toFixed(1) + "GB" : v.size_mb + "MB"}</span>`)
                 .join("");
             const alert = d.alert ? '<span class="badge bg-danger ms-2">⚠ UYARI</span>' : "";
-            const lastRun = d.last_run_at ? d.last_run_at.substring(0, 19).replace("T", " ") + (d.delete_mode ? "" : " (Dry-run)") : "—";
+            const lastRun = d.last_run_at ? formatDT(d.last_run_at) + (d.delete_mode ? "" : " (Dry-run)") : "—";
             document.getElementById("diskContent").innerHTML = `
                 <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
                     <span>Toplam <b>${disk.total_gb} GB</b></span>
@@ -505,14 +557,14 @@ async function initDashboard() {
                 const html = d.races.slice(0, 6).map(rc => {
                     const hc = rc.horse_count || 0;
                     totalHorses += hc;
-                    const timeStr = rc.race_start_at ? rc.race_start_at.substring(11, 16) : "—";
+                    const timeStr = extractTime(rc.race_start_at);
                     const badgeClass = rc.started ? "badge-muted" : "badge-success";
                     const badgeText = rc.started ? "Tamamlandı" : "Koşulacak";
                     return `<tr>
                         <td>${timeStr}</td>
                         <td class="fw-semibold">${rc.track || "—"}</td>
                         <td>${rc.race_no ? rc.race_no + ". Koşu" : "—"}</td>
-                        <td class="text-muted">${rc.surface || "—"}</td>
+                        <td class="fw-medium" style="color: #cbd5e1;">${rc.race_class || rc.surface || "—"}</td>
                         <td>${hc} At</td>
                         <td><span class="badge-pill ${badgeClass}">${badgeText}</span></td>
                     </tr>`;
@@ -536,7 +588,7 @@ async function initDashboard() {
             if (d.predictions && d.predictions.length > 0) {
                 const tbody = document.getElementById("pred-tbody");
                 const html = d.predictions.slice(0, 6).map(p => {
-                    const timeStr = p.prediction_time ? p.prediction_time.substring(11, 16) : "—";
+                    const timeStr = extractTime(p.prediction_time);
                     const prob = p.ensemble_probability ? (p.ensemble_probability * 100).toFixed(1) : 75;
                     const score = (prob / 100).toFixed(2);
                     const badges = `<span class="horse-badge horse-badge-green">#1</span><span class="horse-badge horse-badge-blue">#2</span><span class="horse-badge horse-badge-purple">#3</span>`;

@@ -262,6 +262,21 @@ def _iso(value: Any) -> str | None:
     return None if pd.isna(parsed) else parsed.isoformat()
 
 
+def _format_dt(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    try:
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            dt = pd.to_datetime(value, utc=True, errors="coerce")
+            if pd.isna(dt):
+                return str(value)
+        return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return str(value)
+
+
 def _latest_runner(name: str) -> dict[str, Any]:
     for directory in (LOG_DIR, PROJECT_ROOT / "logs"):
         path = directory / f"{name}_latest.json"
@@ -344,31 +359,45 @@ def dashboard_status() -> dict[str, Any]:
         and coverage
         and not error_logs
     )
+    attention_reasons = []
+    if not leakage:
+        attention_reasons.append("Feature Leakage testi veya raporu eksik")
+    if not contract:
+        attention_reasons.append("Feature Contract doğrulaması başarısız")
+    if not coverage:
+        attention_reasons.append("Snapshot Coverage (<%95 veya veri yok)")
+    for err_log in error_logs:
+        attention_reasons.append(f"Hata logu mevcut: {err_log}")
+    if not monitor:
+        attention_reasons.append("Shadow İzleme kaydı bulunmuyor")
+
     return {
         "system_status": "healthy"
         if leakage and contract and coverage and not error_logs
         else "attention",
+        "attention_reasons": attention_reasons,
         "production_ready": production_ready,
         "shadow_days": shadow_days,
         "leakage_gate": leakage,
         "feature_contract": contract,
         "snapshot_coverage": coverage,
-        "last_pipeline_at": daily.get("ended_at"),
+        "last_pipeline_at": _format_dt(daily.get("ended_at")),
         "last_pipeline_status": daily.get("status"),
-        "last_agf_at": agf.get("ended_at"),
+        "last_agf_at": _format_dt(agf.get("ended_at")),
         "last_agf_status": agf.get("status"),
-        "last_results_at": results.get("ended_at"),
+        "last_results_at": _format_dt(results.get("ended_at")),
         "last_results_status": results.get("status"),
-        "last_prediction_at": _iso(last_prediction),
-        "last_backup_at": datetime.fromtimestamp(
-            backups[0].stat().st_mtime, timezone.utc
-        ).isoformat()
+        "last_prediction_at": _format_dt(last_prediction),
+        "last_backup_at": _format_dt(
+            datetime.fromtimestamp(backups[0].stat().st_mtime, timezone.utc)
+        )
         if backups
         else None,
         "disk_used_percent": round((usage.used / usage.total) * 100, 1),
         "disk_free_gb": round(usage.free / 1024**3, 2),
         "active_errors": error_logs,
         "latest_monitor": monitor,
+        "storage": api_storage_status(),
     }
 
 
@@ -386,13 +415,13 @@ def today_races() -> list[dict[str, Any]]:
                ), agf AS (
                    SELECT race_id,MAX(captured_at) AS last_agf_at FROM agf_snapshots GROUP BY race_id
                )
-               SELECT l.race_id,l.race_start_at,l.race_no,l.track,l.surface,
+               SELECT l.race_id,l.race_start_at,l.race_no,l.track,l.surface,l.race_class,
                       COUNT(*) AS horse_count,
                       SUM(CASE WHEN julianday(l.captured_at)<julianday(l.race_start_at) THEN 1 ELSE 0 END) AS covered,
                       a.last_agf_at
                FROM latest l LEFT JOIN agf a USING(race_id)
                WHERE l.rn=1 AND substr(l.race_start_at,1,10)=?
-               GROUP BY l.race_id,l.race_start_at,l.race_no,l.track,l.surface,a.last_agf_at
+               GROUP BY l.race_id,l.race_start_at,l.race_no,l.track,l.surface,l.race_class,a.last_agf_at
                ORDER BY l.race_start_at,l.race_no""",
             (local_date,),
         ).fetchall()
@@ -407,8 +436,8 @@ def today_races() -> list[dict[str, Any]]:
         )
         start = pd.to_datetime(item["race_start_at"], utc=True, errors="coerce")
         item["started"] = bool(not pd.isna(start) and now >= start)
-        item["race_start_at"] = _iso(item["race_start_at"])
-        item["last_agf_at"] = _iso(item["last_agf_at"])
+        item["race_start_at"] = _format_dt(item["race_start_at"])
+        item["last_agf_at"] = _format_dt(item["last_agf_at"])
         result = coverage_by_race.get(item["race_id"], {})
         item["result_status"] = result.get("status", "Sonuç bekleniyor")
         item["result_missing_reason"] = result.get(
@@ -447,8 +476,8 @@ def current_predictions() -> list[dict[str, Any]]:
     for item in items:
         item["probability_sum"] = round(sums[item["race_id"]], 8)
         item["probability_sum_valid"] = abs(sums[item["race_id"]] - 1.0) <= 1e-6
-        item["race_start_at"] = _iso(item["race_start_at"])
-        item["prediction_time"] = _iso(item["prediction_time"])
+        item["race_start_at"] = _format_dt(item["race_start_at"])
+        item["prediction_time"] = _format_dt(item["prediction_time"])
     return items
 
 

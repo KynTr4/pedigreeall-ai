@@ -48,7 +48,6 @@
                     </div>
                     <div class="topbar-time ms-lg-0 mt-2 mt-lg-0">
                         <span id="header-timestamp">Son güncelleme: {% if data is defined and data.last_pipeline_at %}{{ data.last_pipeline_at }}{% endif %}</span>
-                        <button class="btn-reload" onclick="window.location.reload();" title="Sayfayı Yenile">↻</button>
                     </div>
                 </div>
             </div>
@@ -63,7 +62,7 @@
                 if (ts && (!ts.textContent.trim() || ts.textContent.trim() === 'Son güncelleme:')) {
                     const now = new Date();
                     const pad = n => String(n).padStart(2, '0');
-                    const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+                    const dateStr = `${pad(now.getDate())}.${pad(now.getMonth()+1)}.${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
                     ts.textContent = `Son güncelleme: ${dateStr}`;
                 }
             });
