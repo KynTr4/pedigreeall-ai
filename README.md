@@ -122,8 +122,8 @@ output/                     # Model and pipeline outputs
 ## Installation
 
 ```bash
-git clone https://github.com/KynTr4/at_yaris_tahmini.git
-cd at_yaris_tahmini
+git clone https://github.com/KynTr4/pedigreeall-ai.git
+cd pedigreeall-ai
 
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -289,7 +289,7 @@ The repository includes a production-oriented VPS deployment workflow.
 Typical deployment flow:
 
 ```bash
-cd /opt/at_yaris_tahmini
+cd /opt/pedigreeall-ai
 sudo ./deploy.sh
 ```
 
