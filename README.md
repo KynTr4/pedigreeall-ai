@@ -21,6 +21,7 @@
 - [Machine Learning Pipeline](#machine-learning-pipeline)
 - [Data Lifecycle](#data-lifecycle)
 - [Dashboard](#dashboard)
+- [Screenshots](#screenshots)
 - [VPS Deployment](#vps-deployment)
 - [Backup Strategy](#backup-strategy)
 - [Roadmap](#roadmap)
@@ -236,6 +237,34 @@ The project includes a read-only FastAPI dashboard for monitoring data collectio
 - Read-only SQLite access
 - Basic Authentication support
 - `/api/*` endpoints for structured access
+
+---
+
+## Screenshots
+
+### System Dashboard
+
+The system dashboard shows database status, race-day data, prediction snapshots, result matching, and shadow-mode monitoring.
+
+![System Dashboard](docs/images/dashboard-status.png)
+
+---
+
+### Betting Simulation
+
+The betting simulation page compares model outputs such as CatBoost, XGBoost, Logistic Regression, and Ensemble under a configurable flat-stake strategy.
+
+![Betting Simulation](docs/images/dashboard-betting.png)
+
+---
+
+### Shadow Monitoring
+
+The shadow monitoring page tracks model performance, Top-1 / Top-3 / Top-5 accuracy, ROI, model comparison, and segment-level performance.
+
+> Note: Screenshots are taken from a local development environment. Some metrics may appear as zero until enough evaluated races and prediction results are collected.
+
+![Shadow Monitoring](docs/images/dashboard-shadow.png)
 
 ---
 
